@@ -5,6 +5,7 @@
 // both functions as tools) and detail.mjs (shell_detail_enhance's adaptive zones).
 // ============================================================================
 import { q, num } from './pjsr-args.mjs';
+import { PIXEL_ROWS } from './pixel-rows.mjs';
 
 export const ADAPTIVE_ZONE_IDS = ['azone_core', 'azone_shell', 'azone_outer'];
 
@@ -26,12 +27,50 @@ export async function createAdaptiveZoneMasks(api, viewId, opts = {}) {
     var img = w.mainView.image;
     var isColor = img.isColor;
     var W = img.width, H = img.height;
+    ${PIXEL_ROWS}
 
-    function getLum(px, py) {
-      if (isColor) {
-        return 0.2126 * img.sample(px, py, 0) + 0.7152 * img.sample(px, py, 1) + 0.0722 * img.sample(px, py, 2);
+    // The Rec.709 luminance (colour) or the sample (mono) at a pixel, a row computed at a time.
+    var getLum = mcpLumCache(img, 4);
+
+    // A row at a time, in a function so the loop runs on its own variables (see pixel-rows.mjs).
+    // Returns the pixel counts [core, shell, outer].
+    function mcpAdaptiveZoneRows(img, W, H, cx, cy, rad, coreTh, shellLow, mid, half, subjectTh, iC, iS, iO) {
+      var cc = 0, sc = 0, oc = 0;
+      var lumBufs = mcpLumBuffers(W);
+      var rowC = new Float64Array(W), rowS = new Float64Array(W), rowO = new Float64Array(W);
+      for (var y = 0; y < H; y++) {
+        var lumRow = mcpLumRow(img, y, lumBufs);
+        for (var x = 0; x < W; x++) {
+          var lum = lumRow[x];
+          var dx = x - cx, dy = y - cy;
+          var dist = Math.sqrt(dx*dx + dy*dy);
+          var roiW = dist < rad ? 1.0 : Math.max(0, 1.0 - (dist - rad) / 20.0);
+
+          var cV = 0;
+          if (lum > coreTh) {
+            cV = Math.min(1.0, (lum - coreTh) / Math.max(0.01, 1.0 - coreTh));
+            cc++;
+          }
+          var sV = 0;
+          if (half > 0 && lum > shellLow && lum <= coreTh) {
+            sV = Math.max(0, Math.min(1, 1.0 - Math.abs(lum - mid) / half));
+            sc++;
+          }
+          var oV = 0;
+          if (lum > subjectTh && lum <= shellLow) {
+            oV = Math.min(1.0, (lum - subjectTh) / Math.max(0.01, shellLow - subjectTh));
+            oc++;
+          }
+          rowC[x] = cV * roiW;
+          rowS[x] = sV * roiW;
+          rowO[x] = oV * roiW;
+        }
+        mcpSetRow(iC, y, 0, rowC);
+        mcpSetRow(iS, y, 0, rowS);
+        mcpSetRow(iO, y, 0, rowO);
+        mcpRowDone();
       }
-      return img.sample(px, py);
+      return [cc, sc, oc];
     }
 
     var cx = -1, cy = -1, rad = -1;
@@ -93,32 +132,13 @@ export async function createAdaptiveZoneMasks(api, viewId, opts = {}) {
 
       mC.mainView.beginProcess(); mS.mainView.beginProcess(); mO.mainView.beginProcess();
 
-      for (var y = 0; y < H; y++) {
-        for (var x = 0; x < W; x++) {
-          var lum = getLum(x, y);
-          var dx = x - cx, dy = y - cy;
-          var dist = Math.sqrt(dx*dx + dy*dy);
-          var roiW = dist < rad ? 1.0 : Math.max(0, 1.0 - (dist - rad) / 20.0);
-
-          var cV = 0;
-          if (lum > coreTh) {
-            cV = Math.min(1.0, (lum - coreTh) / Math.max(0.01, 1.0 - coreTh));
-            cc++;
-          }
-          var sV = 0;
-          if (half > 0 && lum > shellLow && lum <= coreTh) {
-            sV = Math.max(0, Math.min(1, 1.0 - Math.abs(lum - mid) / half));
-            sc++;
-          }
-          var oV = 0;
-          if (lum > subjectTh && lum <= shellLow) {
-            oV = Math.min(1.0, (lum - subjectTh) / Math.max(0.01, shellLow - subjectTh));
-            oc++;
-          }
-          iC.setSample(cV * roiW, x, y);
-          iS.setSample(sV * roiW, x, y);
-          iO.setSample(oV * roiW, x, y);
-        }
+      // A failed or stopped run leaves none of the three windows open.
+      try {
+        var counts = mcpAdaptiveZoneRows(img, W, H, cx, cy, rad, coreTh, shellLow, mid, half, subjectTh, iC, iS, iO);
+        cc = counts[0]; sc = counts[1]; oc = counts[2];
+      } catch (e) {
+        [mC, mS, mO].forEach(function (m) { try { m.mainView.endProcess(); } catch (e2) {} m.forceClose(); });
+        throw e;
       }
       mC.mainView.endProcess(); mS.mainView.endProcess(); mO.mainView.endProcess();
 
@@ -168,14 +188,7 @@ export async function createZoneMasks(api, viewId, thresholds = {}) {
     var src = ImageWindow.windowById(${q(viewId)});
     if (src.isNull) throw new Error('createZoneMasks: view not found: ' + ${q(viewId)});
     var img = src.mainView.image;
-    var isColor = img.isColor;
-
-    function getLum(x, y) {
-      if (isColor) {
-        return 0.2126 * img.sample(x, y, 0) + 0.7152 * img.sample(x, y, 1) + 0.0722 * img.sample(x, y, 2);
-      }
-      return img.sample(x, y);
-    }
+    ${PIXEL_ROWS}
 
     var w = img.width;
     var h = img.height;
@@ -198,13 +211,32 @@ export async function createZoneMasks(api, viewId, thresholds = {}) {
     shellW.mainView.beginProcess();
     haloW.mainView.beginProcess();
 
-    for (var y = 0; y < h; y++) {
-      for (var x = 0; x < w; x++) {
-        var lum = getLum(x, y);
-        coreImg.setSample(lum > ${coreClip} ? Math.min(1, (lum - ${coreClip}) / (1 - ${coreClip})) : 0, x, y);
-        shellImg.setSample(lum > ${shellClip} && lum <= ${coreClip} ? Math.min(1, (lum - ${shellClip}) / (${coreClip} - ${shellClip})) : 0, x, y);
-        haloImg.setSample(lum > ${haloClip} && lum <= ${shellClip} ? Math.min(1, (lum - ${haloClip}) / (${shellClip} - ${haloClip})) : 0, x, y);
+    // A row at a time, from the Rec.709 luminance (colour) or the samples (mono), in a function so the
+    // loop runs on its own variables (see pixel-rows.mjs).
+    function mcpZoneRows(img, w, h, coreImg, shellImg, haloImg) {
+      var lumBufs = mcpLumBuffers(w);
+      var rowCore = new Float64Array(w), rowShell = new Float64Array(w), rowHalo = new Float64Array(w);
+      for (var y = 0; y < h; y++) {
+        var lumRow = mcpLumRow(img, y, lumBufs);
+        for (var x = 0; x < w; x++) {
+          var lum = lumRow[x];
+          rowCore[x] = lum > ${coreClip} ? Math.min(1, (lum - ${coreClip}) / (1 - ${coreClip})) : 0;
+          rowShell[x] = lum > ${shellClip} && lum <= ${coreClip} ? Math.min(1, (lum - ${shellClip}) / (${coreClip} - ${shellClip})) : 0;
+          rowHalo[x] = lum > ${haloClip} && lum <= ${shellClip} ? Math.min(1, (lum - ${haloClip}) / (${shellClip} - ${haloClip})) : 0;
+        }
+        mcpSetRow(coreImg, y, 0, rowCore);
+        mcpSetRow(shellImg, y, 0, rowShell);
+        mcpSetRow(haloImg, y, 0, rowHalo);
+        mcpRowDone();
       }
+    }
+
+    // A failed or stopped run leaves none of the three windows open.
+    try {
+      mcpZoneRows(img, w, h, coreImg, shellImg, haloImg);
+    } catch (e) {
+      [coreW, shellW, haloW].forEach(function (m) { try { m.mainView.endProcess(); } catch (e2) {} m.forceClose(); });
+      throw e;
     }
 
     coreW.mainView.endProcess();

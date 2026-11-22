@@ -121,7 +121,7 @@ test('extract_pseudo_oiii requires continuum_factor and runs no NoiseXTerminator
   await refusesWithout(t, { rgb_id: 'RGB', continuum_factor: 0.3 }, ['continuum_factor']);
   const { api, emitted } = compilingApi({ replies: [JSON.stringify({ viewId: 'OIII_pseudo', median: 0.02, max: 0.5 })] });
   const out = await t.handler(api, { rgb_id: 'RGB', continuum_factor: 0.3 });
-  assert.match(emitted[0], /Math\.max\(0, b - 0\.3 \* r\)/);
+  assert.match(emitted[0], /Math\.max\(0, rowB\[x\] - 0\.3 \* rowR\[x\]\)/);
   assert.match(emitted[0], /new ImageWindow\(w, h, 1, 32, true, false, "OIII_pseudo"\)/);
   assert.doesNotMatch(emitted[0], /NoiseXTerminator|denoise/);
   assert.match(out.text, /Pseudo-OIII extracted: OIII_pseudo/);
@@ -234,6 +234,11 @@ function runDnb(code, { targetColor = true, pixelMathThrows = false } = {}) {
       return 0.25;
     }
     setSample() {}
+    getSamples(buf, rect, c = 0) {
+      if (c >= this.numberOfChannels) throw new Error(`Image.getSamples(): Invalid channel index '${c}'; expected 0 <= c < ${this.numberOfChannels}.`);
+      buf.fill(0.25);
+    }
+    setSamples() {}
     median() { return 0.1; }
     maximum() { return 0.9; }
     resetChannelSelection() {}
@@ -262,7 +267,8 @@ function runDnb(code, { targetColor = true, pixelMathThrows = false } = {}) {
   const target = new ImageWindow(8, 6, targetColor ? 3 : 1, 32, true, targetColor, 'RGB');
   new ImageWindow(8, 6, 1, 32, true, false, 'Ha');
   new ImageWindow(8, 6, 1, 32, true, false, 'OIII');
-  const sandbox = { ImageWindow, Convolution: Object.assign(proc('Convolution'), { Parametric: 1 }), PixelMath: proc('PixelMath', pixelMathThrows) };
+  class Rect { constructor(x0, y0, x1, y1) { Object.assign(this, { x0, y0, x1, y1 }); } }
+  const sandbox = { ImageWindow, Rect, processEvents() {}, Convolution: Object.assign(proc('Convolution'), { Parametric: 1 }), PixelMath: proc('PixelMath', pixelMathThrows) };
   let out = null, error = null;
   try { out = JSON.parse(vm.runInNewContext(code, sandbox)); } catch (e) { error = e; }
   return { out, error, target, ran, open: [...open.keys()] };

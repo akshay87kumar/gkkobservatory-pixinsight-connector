@@ -315,7 +315,7 @@ export function resolveExportPath(filePath, { outputDir, stateDir }, platform = 
 
 const exportImage = {
   name: 'export_image',
-  description: 'Write an image to a file in the workspace\'s output or state folder. A relative file_path is resolved under <workspace>/output; an absolute one must lie inside <workspace>/output or the state folder (<workspace>/agentic by default), and a path anywhere else is refused. Format comes from the extension: .tif/.tiff, .png, .jpg/.jpeg, .xisf, .fits. TIFF and PNG default to 16-bit, JPEG to 8-bit; use 32 for float. The file keeps the image\'s FITS keywords, astrometric solution and view properties (formats that cannot store them drop them). The working image is not changed. Missing parent folders are created.',
+  description: 'Write an image to a file in the workspace\'s output or state folder. A relative file_path is resolved under <workspace>/output; an absolute one must lie inside <workspace>/output or the state folder (<workspace>/agentic by default), and a path anywhere else is refused. Format comes from the extension: .tif/.tiff, .png, .jpg/.jpeg, .xisf, .fits. TIFF and PNG default to 16-bit, JPEG to 8-bit; use 32 for float. The file keeps the image\'s FITS keywords, astrometric solution and view properties (formats that cannot store them drop them); an XISF file also keeps the view\'s id, so it opens under that name. The working image is not changed. Missing parent folders are created.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -345,8 +345,17 @@ const exportImage = {
     if (again.error) return { isError: true, text: again.error };
     const out = await run(api, `${need(input.view_id)}
       var src = __w.mainView.image;
-      var c = new ImageWindow(src.width, src.height, src.numberOfChannels, 32, true, src.isColor, 'export_tmp');
+      // An XISF file stores the id of the view it was saved from, and the copy saved here is a new
+      // window. The copy takes the source view's id, so that the file opens later under the name of
+      // the view it came from: the source is renamed while the copy exists, and renamed back whatever
+      // happens.
+      var srcId = __w.mainView.id;
+      var parkedId = '__mcp_export_source';
+      for (var n = 1; !ImageWindow.windowById(parkedId).isNull; ++n) parkedId = '__mcp_export_source' + n;
+      __w.mainView.id = parkedId;
+      var c = null;
       try {
+        c = new ImageWindow(src.width, src.height, src.numberOfChannels, 32, true, src.isColor, srcId);
         c.mainView.beginProcess(); c.mainView.image.assign(src); c.mainView.endProcess();
         // The copy is a new window: carry over what the file should describe, not just the pixels.
         c.keywords = __w.keywords;
@@ -361,7 +370,10 @@ const exportImage = {
         ${conv ? `var S = new SampleFormatConversion; S.format = ${conv}; S.executeOn(c.mainView);` : ''}
         if (File.exists(${q(toPixPath(file))})) File.remove(${q(toPixPath(file))});
         if (!c.saveAs(${q(toPixPath(file))}, false, false, false, false)) throw new Error('PixInsight did not write ' + ${q(toPixPath(file))} + ' (saveAs returned false)');
-      } finally { c.forceClose(); }
+      } finally {
+        if (c !== null) c.forceClose();
+        __w.mainView.id = srcId;
+      }
       if (!File.exists(${q(toPixPath(file))})) throw new Error('File was not written');
       return String(new FileInfo(${q(toPixPath(file))}).size);`);
     return { text: `Wrote ${file} (${(Number(out) / 1048576).toFixed(1)} MB, ${ext === '.jpg' || ext === '.jpeg' ? '8-bit' : bits + '-bit'}).` };

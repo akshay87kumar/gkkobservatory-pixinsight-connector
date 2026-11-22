@@ -11,6 +11,7 @@
 // not enough.
 // ============================================================================
 import { q, num, vid, pjsrJson, fixed, lit } from './pjsr-args.mjs';
+import { PIXEL_ROWS } from './pixel-rows.mjs';
 
 // Shared PixelMath settings for an in-place, 64-bit, [0,1]-truncated run.
 const PM_INPLACE = 'PM.use64BitWorkingImage = true; PM.truncate = true; PM.truncateLower = 0; PM.truncateUpper = 1; PM.createNewImage = false;';
@@ -22,14 +23,22 @@ const softClamp = (raw, maxOut, rolloff) => `iif(${raw} > ${maxOut}, ${maxOut} +
 
 const numbers = (s) => `median=${fixed(s.median, 6)}, max=${fixed(s.max, 4)}`;
 
-// sizeMismatch(api, tool, [[label, id], ...]) -> null, or the text of the error result when the
-// listed views are not all the same width and height. PixelMath reads another view at the same
-// pixel coordinates whatever its size, so a tool that combines views would otherwise blend shifted
-// content and report success. A view api.listImages() does not report is left out: the server has
-// already refused one that is not open. Also used by src/tools/stars.mjs.
-export async function sizeMismatch(api, tool, views) {
+// sizeMismatch(api, tool, [[label, id], ...], { color: [label, ...] }) -> null, or the text of the
+// error result when a view named in `color` is mono, or the listed views are not all the same width
+// and height. PixelMath reads another view at the same pixel coordinates whatever its size, so a tool
+// that combines views would otherwise blend shifted content and report success; and a tool whose
+// PixelMath reads [0], [1] and [2] of a view changes a mono view as if it were R and reports success.
+// A view api.listImages() does not report is left out: the server has already refused one that is
+// not open. Also used by src/tools/stars.mjs.
+export async function sizeMismatch(api, tool, views, { color = [] } = {}) {
   const open = await api.listImages();
   const sized = views.map(([label, id]) => ({ label, id, img: open.find((i) => i.id === id) })).filter((v) => v.img);
+  const mono = sized.filter((v) => color.includes(v.label) && v.img.isColor === false);
+  if (mono.length) {
+    const needed = views.filter(([label]) => color.includes(label)).map(([label]) => label);
+    return `${tool} not run: ${needed.join(', ')} ${needed.length > 1 ? 'must be colour (RGB) views' : 'must be a colour (RGB) view'}; ` +
+      `${mono.map((v) => `${v.label} ${v.id}`).join(', ')} ${mono.length > 1 ? 'are' : 'is'} mono. No view was changed.`;
+  }
   if (sized.length < 2) return null;
   const { width, height } = sized[0].img;
   if (sized.every((v) => v.img.width === width && v.img.height === height)) return null;
@@ -69,7 +78,7 @@ const haInjectRed = {
     const clamped = given(input.max_output);
     const maxOut = clamped ? num(input.max_output, undefined, 'max_output') : null;
     const rolloff = clamped ? num(input.rolloff, undefined, 'rolloff') : null;
-    const mismatch = await sizeMismatch(api, 'ha_inject_red', [['target_id', tgt], ['ha_id', ha]]);
+    const mismatch = await sizeMismatch(api, 'ha_inject_red', [['target_id', tgt], ['ha_id', ha]], { color: ['target_id'] });
     if (mismatch) return { isError: true, text: mismatch };
     // PixelMath has no variables here, so the raw expression repeats inside the clamp.
     const rawExpr = `iif(${ha} > ${tgt}[0] * (1 + ${limit}), ${tgt}[0] + ${str} * (${ha} - ${tgt}[0]), ${tgt}[0])`;
@@ -81,7 +90,7 @@ const haInjectRed = {
       PM.expression2 = ${q(`${tgt}[2]`)};
       PM.useSingleExpression = false;
       ${PM_INPLACE}
-      PM.executeOn(ImageWindow.windowById(${q(tgt)}).mainView);
+      if (!PM.executeOn(ImageWindow.windowById(${q(tgt)}).mainView)) throw new Error('PixelMath did not run on ' + ${q(tgt)});
     `);
     if (r.status === 'error') throw new Error(`ha_inject_red failed: ${r.error?.message}`);
     const stats = await api.stats(tgt);
@@ -120,7 +129,7 @@ const haInjectLuminance = {
     const tgt = vid(input.target_id, 'target_id');
     const ha = vid(input.ha_id, 'ha_id');
     const str = num(input.strength, undefined, 'strength');
-    const mismatch = await sizeMismatch(api, 'ha_inject_luminance', [['target_id', tgt], ['ha_id', ha]]);
+    const mismatch = await sizeMismatch(api, 'ha_inject_luminance', [['target_id', tgt], ['ha_id', ha]], { color: ['target_id'] });
     if (mismatch) return { isError: true, text: mismatch };
     // Y_new = Y_old + strength * max(Ha - Y_old, 0), applied as a ratio so colour is preserved.
     const Y = '(0.2126*$T[0] + 0.7152*$T[1] + 0.0722*$T[2])';
@@ -130,7 +139,7 @@ const haInjectLuminance = {
       PM.expression = ${q(expr)};
       PM.useSingleExpression = true;
       ${PM_INPLACE}
-      PM.executeOn(ImageWindow.windowById(${q(tgt)}).mainView);
+      if (!PM.executeOn(ImageWindow.windowById(${q(tgt)}).mainView)) throw new Error('PixelMath did not run on ' + ${q(tgt)});
     `);
     if (r.status === 'error') throw new Error(`ha_inject_luminance failed: ${r.error?.message}`);
     return { text: `Ha luminance blended (strength=${str})` };
@@ -172,15 +181,27 @@ const extractPseudoOiii = {
       var h = img.height;
       var outW = new ImageWindow(w, h, 1, 32, true, false, ${q(outputId)});
       var outImg = outW.mainView.image;
+      ${PIXEL_ROWS}
 
-      // OIII = max(0, B - factor * R)
-      outW.mainView.beginProcess();
-      for (var y = 0; y < h; y++) {
-        for (var x = 0; x < w; x++) {
-          var b = img.sample(x, y, 2);
-          var r = img.sample(x, y, 0);
-          outImg.setSample(Math.max(0, b - ${factor} * r), x, y);
+      // OIII = max(0, B - factor * R), a row at a time (in a function: see pixel-rows.mjs). A failed
+      // or stopped run leaves no window.
+      function mcpPseudoOiiiRows(img, outImg, w, h) {
+        var rowB = new Float64Array(w), rowR = new Float64Array(w), rowO = new Float64Array(w);
+        for (var y = 0; y < h; y++) {
+          mcpGetRow(img, y, 2, rowB);
+          mcpGetRow(img, y, 0, rowR);
+          for (var x = 0; x < w; x++) rowO[x] = Math.max(0, rowB[x] - ${factor} * rowR[x]);
+          mcpSetRow(outImg, y, 0, rowO);
+          mcpRowDone();
         }
+      }
+      outW.mainView.beginProcess();
+      try {
+        mcpPseudoOiiiRows(img, outImg, w, h);
+      } catch (e) {
+        try { outW.mainView.endProcess(); } catch (e2) {}
+        outW.forceClose();
+        throw e;
       }
       outW.mainView.endProcess();
 
@@ -296,14 +317,15 @@ const dynamicNarrowbandBlend = {
       var oldMask = ImageWindow.windowById(nbMaskId);
       if (!oldMask.isNull) oldMask.forceClose();
 
+      ${PIXEL_ROWS}
       var maskW = new ImageWindow(w, h, 1, 32, true, false, nbMaskId);
       try {
         var maskImg = maskW.mainView.image;
+        var lumBufs = mcpLumBuffers(w);
         maskW.mainView.beginProcess();
         for (var y = 0; y < h; y++) {
-          for (var x = 0; x < w; x++) {
-            maskImg.setSample(0.2126 * img.sample(x, y, 0) + 0.7152 * img.sample(x, y, 1) + 0.0722 * img.sample(x, y, 2), x, y);
-          }
+          mcpSetRow(maskImg, y, 0, mcpLumRow(img, y, lumBufs));
+          mcpRowDone();
         }
         maskW.mainView.endProcess();
 
