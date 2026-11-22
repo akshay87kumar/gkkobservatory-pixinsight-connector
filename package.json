@@ -1,6 +1,6 @@
 {
   "name": "pixinsight-connector",
-  "version": "2.5.3",
+  "version": "2.5.3-gkkobservatory.1",
   "mcpName": "io.github.mxcoppell/pixinsight-connector",
   "description": "MCP connector that lets any AI agent operate PixInsight: a toolbox of PixInsight operations, extensible with runtime tool packs",
   "type": "module",
@@ -32,9 +32,9 @@
     "type": "git",
     "url": "git+https://github.com/mxcoppell/pixinsight-connector.git"
   },
-  "homepage": "https://github.com/mxcoppell/pixinsight-connector#readme",
+  "homepage": "https://github.com/akshay87kumar/gkkobservatory-pixinsight-connector#readme",
   "bugs": {
-    "url": "https://github.com/mxcoppell/pixinsight-connector/issues"
+    "url": "https://github.com/akshay87kumar/gkkobservatory-pixinsight-connector/issues"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0"

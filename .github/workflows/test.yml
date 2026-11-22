@@ -1,8 +1,8 @@
 name: test
+# gkkobservatory build: tests only. This repository publishes nothing to npm, the MCP registry or GitHub releases.
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
 permissions:
   contents: read
@@ -29,73 +29,3 @@ jobs:
       - name: All matrix legs must pass
         run: test "${{ needs.test.result }}" = "success"
 
-  publish:                   # on a v* tag: npm via trusted publishing (OIDC, no token), then the MCP registry
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: gate
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write        # npm trusted publishing and provenance; MCP registry github-oidc login
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          registry-url: 'https://registry.npmjs.org'
-      - name: The tag must equal v + package.json version
-        run: >-
-          node -e "const v = 'v' + require('./package.json').version;
-          if (process.env.GITHUB_REF_NAME !== v) { console.error('tag ' + process.env.GITHUB_REF_NAME + ' does not match package.json ' + v); process.exit(1); }"
-      - name: Trusted publishing needs npm 11.5.1+
-        run: npm install -g npm@^11.5.1
-      - run: npm ci --ignore-scripts
-      - name: Publish to npm (skipped when this version is already there, so a failed run can be re-run)
-        run: |
-          spec="$(node -p "const p = require('./package.json'); p.name + '@' + p.version")"
-          if npm view "$spec" version >/dev/null 2>&1; then echo "$spec is already on npm"; else npm publish --provenance --access public; fi
-      - name: Wait until npm serves the new version (the MCP registry looks it up)
-        run: |
-          spec="$(node -p "const p = require('./package.json'); p.name + '@' + p.version")"
-          for i in $(seq 1 40); do
-            npm view "$spec" version --prefer-online >/dev/null 2>&1 && exit 0
-            sleep 15
-          done
-          echo "$spec did not appear on npm within 10 minutes"; exit 1
-      - name: Install mcp-publisher
-        env:
-          MCP_PUBLISHER_VERSION: '1.8.1'
-        run: >-
-          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz"
-          | tar xz mcp-publisher
-      - run: ./mcp-publisher login github-oidc
-      - run: ./mcp-publisher publish
-
-  github-release:            # after publish: the GitHub release, notes from CHANGELOG.md, with the .mcpb bundle
-    needs: publish
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 24 }
-      - name: Release notes are the CHANGELOG.md section for this version
-        run: >-
-          node -e "const fs = require('fs'); const v = require('./package.json').version;
-          const m = fs.readFileSync('CHANGELOG.md', 'utf8').match(new RegExp('^## ' + v.replace(/\./g, '\\\\.') + '\\\\n([\\\\s\\\\S]*?)(?=^## |(?![\\\\s\\\\S]))', 'm'));
-          if (!m || !m[1].trim()) { console.error('CHANGELOG.md has no section for ' + v); process.exit(1); }
-          fs.writeFileSync(process.env.RUNNER_TEMP + '/notes.md', m[1].trim() + '\\n');"
-      - name: Pack the .mcpb bundle with the runtime dependencies only
-        run: |
-          npm ci --omit=dev --ignore-scripts
-          npx -y @anthropic-ai/mcpb@2.1.2 pack . "$RUNNER_TEMP/pixinsight-connector-${GITHUB_REF_NAME#v}.mcpb"
-      - name: Create the release (or replace its bundle when re-run)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          bundle="$RUNNER_TEMP/pixinsight-connector-${GITHUB_REF_NAME#v}.mcpb"
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$bundle" --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" "$bundle" --title "pixinsight-connector ${GITHUB_REF_NAME#v}" --notes-file "$RUNNER_TEMP/notes.md" --verify-tag
-          fi

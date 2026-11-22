@@ -94,11 +94,13 @@ test('every user_config value manifest.json maps into the environment is optiona
   }
 });
 
-test('README.md installs the published npm package', async () => {
+// The gkkobservatory build is installed from its own GitHub repository, not from npm (where the package
+// name is upstream's); the README also says how to go back to the upstream release.
+test('README.md installs the gkkobservatory build from GitHub', async () => {
   const readme = await readFile(path.join(ROOT, 'README.md'), 'utf8');
-  assert.match(readme, /npm install -g pixinsight-connector\n/, 'README.md installs from npm');
-  assert.match(readme, /npx -y pixinsight-connector`/, 'README.md gives the npx command');
-  assert.doesNotMatch(readme, /github:mxcoppell\/pixinsight-connector/, 'README.md still installs from GitHub');
+  assert.match(readme, /npm install -g github:akshay87kumar\/gkkobservatory-pixinsight-connector\n/, 'README.md installs this build from GitHub');
+  assert.match(readme, /`npm install -g pixinsight-connector` goes back to the upstream release/, 'README.md says how to go back to upstream');
+  assert.doesNotMatch(readme, /github:mxcoppell\/pixinsight-connector/, 'README.md installs upstream from GitHub');
 });
 
 // The github-release job in .github/workflows/test.yml takes the release notes from this section.

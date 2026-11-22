@@ -2,6 +2,17 @@
 
 Each release's full notes are on its [GitHub release](https://github.com/mxcoppell/pixinsight-connector/releases).
 
+## 2.5.3-gkkobservatory.1
+
+**The first gkkobservatory build:** upstream 2.5.3 plus the fixes below, merged here before upstream has released them. Each is also offered to [mxcoppell/pixinsight-connector](https://github.com/mxcoppell/pixinsight-connector). Install with `npm install -g github:akshay87kumar/gkkobservatory-pixinsight-connector`.
+
+- `multi_scale_enhance` works on mono views; it failed on every one with `cloneView is not a function` ([mxcoppell/pixinsight-connector#40](https://github.com/mxcoppell/pixinsight-connector/pull/40)).
+- `run_curves` on a grayscale view refuses a channel other than RGB/K, instead of reporting success while changing nothing ([mxcoppell/pixinsight-connector#41](https://github.com/mxcoppell/pixinsight-connector/pull/41)).
+- The tools that blend in a second view refuse one of another size, instead of blending a misregistered result ([mxcoppell/pixinsight-connector#42](https://github.com/mxcoppell/pixinsight-connector/pull/42)).
+- `dynamic_narrowband_blend` always closes its mask window, also when the blend fails ([mxcoppell/pixinsight-connector#43](https://github.com/mxcoppell/pixinsight-connector/pull/43)).
+- Bridge: the fixed cost of a call drops from about 0.5-1 s to about 0.1-0.2 s (the watcher's waits are bounded by wall time, and results are polled every 100 ms). On Windows, a heartbeat read that lands while the watcher rewrites the file no longer launches a second watcher or fails a running command with "the watcher stopped while running this command". Not offered upstream yet.
+- Build: installed from GitHub, not npm. CI runs the tests only; nothing is published to npm or the MCP registry.
+
 ## 2.5.3
 
 **Security: transitive dependencies are pinned to patched versions.** `npm audit` flagged two packages from `@modelcontextprotocol/sdk`'s HTTP and server stack; the connector is a stdio server and uses none of the affected code paths, but the lockfile now carries the fixed versions so `npm audit` is clean for everyone who installs it. No direct dependency changed.
