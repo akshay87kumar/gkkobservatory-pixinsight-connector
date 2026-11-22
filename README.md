@@ -1,95 +1,58 @@
-# PixInsight Connector (gkkobservatory build)
+# gkkobservatory PixInsight Connector
 
-The gkkobservatory build of [mxcoppell/pixinsight-connector](https://github.com/mxcoppell/pixinsight-connector): the upstream
-release plus the fixes listed in [CHANGELOG.md](CHANGELOG.md), which are offered upstream too. Report problems with this build here.
+The PixInsight MCP connector used at [gkkobservatory](https://www.gkkobservatory.in), the Dr. Gopal Krishna Kunwar
+Observatory: urban astrophotography by Akshay Kumar from Bhagalpur, Bihar (Bortle 8). It lets an AI agent
+(Claude Code, Codex, Cursor and others) operate [PixInsight](https://pixinsight.com) through about 80 tools.
+It is [mxcoppell/pixinsight-connector](https://github.com/mxcoppell/pixinsight-connector) plus fixes found while
+processing real data; [CHANGELOG.md](CHANGELOG.md) lists them and which are offered upstream.
 
-An MCP connector that lets any AI agent operate [PixInsight](https://pixinsight.com): about 80 PixInsight
-operations as tools, for chat sessions and the skills that guide them. **New here? Start with the [Quick start](QUICKSTART.md).**
+Example: the [Seagull Nebula (IC 2177)](https://www.gkkobservatory.in/signals/seagull-nebula-ic-2177-runaway-star-bow-shock),
+processed end to end through the connector.
 
-> Community project, not affiliated with or endorsed by Pleiades Astrophoto. PixInsight® is a registered trademark of Pleiades Astrophoto S.L.
+## Tools
 
-## The principle: a toolbox, not a pipeline
+| Area | Examples |
+|---|---|
+| Images | `open_image`, `list_open_images`, `crop_image`, `clone_image`, `export_image` |
+| Processes | `run_process` (any PixInsight process), `run_pixelmath`, `run_curves`, `describe_process` |
+| Linear prep | `run_abe`, `run_mgc`, `run_gradient_correction`, `run_background_neutralization` |
+| Colour and astrometry | `run_plate_solve`, `run_spcc`, `run_spfc`, `verify_astrometry`, `catalog_stars` |
+| Detail and noise | `run_bxt`, `run_nxt`, `run_hdrmt`, `run_lhe`, `multi_scale_enhance` |
+| Stretch and tone | `auto_stretch`, `robust_median_stretch`, `set_stf`, `continuous_clamp` |
+| Channels and narrowband | `combine_channels`, `lrgb_combine`, `dynamic_narrowband_blend`, `extract_pseudo_oiii` |
+| Stars and masks | `run_sxt`, `stretch_stars`, `star_protected_blend`, `create_luminance_mask`, `apply_mask` |
+| Measurement | `get_image_stats`, `measure_stars`, `measure_sharpness`, `measure_uniformity`, `compare_images` |
+| Preview and scripting | `save_and_show_preview`, `run_pjsr`, `job_status`, `cancel_job` |
 
-The connector knows how to **operate** PixInsight, never what makes a **good picture**. No pipeline, no
-ordering, no recommended values, no verdicts: every tool takes the values that shape the image as inputs,
-and every measurement returns numbers. The knowledge (which tools, in what order, with which values, what
-counts as good enough) lives in **skills**: markdown in your own repositories, public or private.
+All 80-odd, with parameters: [docs/tools.md](docs/tools.md).
 
-```mermaid
-%%{init: {'theme': 'base', 'flowchart': {'wrappingWidth': 400, 'curve': 'basis', 'padding': 18}, 'themeVariables': {'fontFamily': "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Helvetica, Arial, sans-serif", 'lineColor': '#94a3b8', 'textColor': '#334155', 'edgeLabelBackground': '#e2e8f0'}}}%%
-flowchart TB
-    classDef know fill:#0f766e,stroke:#115e59,color:#f0fdfa,stroke-width:1px,rx:12,ry:12
-    classDef harness fill:#475569,stroke:#334155,color:#f8fafc,stroke-width:1px,rx:12,ry:12
-    classDef tool fill:#1e293b,stroke:#64748b,color:#f8fafc,stroke-width:1px,rx:12,ry:12
-    classDef app fill:#e2e8f0,stroke:#94a3b8,color:#0f172a,stroke-width:1px
-    You(["You, in a chat session"]):::know
-    Skills("<b>The knowledge · yours</b><br/>your skills: order, values, quality gates<br/>kept in your own repositories"):::know
-    Harness("<b>Any MCP agent harness</b><br/>Claude Code · Codex · Cursor · Gemini CLI · …"):::harness
-    Tools("<b>The toolbox · this connector</b><br/>~80 PixInsight operations as MCP tools<br/>measurements return numbers, never verdicts"):::tool
-    Bridge("<b>File bridge + watcher script</b><br/>starts PixInsight on the first call"):::tool
-    PI(["PixInsight 1.9.5+"]):::app
-    You --> Harness
-    Skills -. guides .-> Harness
-    Harness -- MCP tool calls --> Tools
-    Tools --> Bridge
-    Bridge <--> PI
-    linkStyle default stroke:#8b949e,stroke-width:1.5px
-```
+## What it does
+
+- **Operates PixInsight for an agent:** open and inspect images, run any process, build masks, stretch, combine
+  channels, separate stars, plate solve, calibrate colour, measure, preview and export.
+- **Starts itself:** PixInsight and a small watcher script launch on the first tool call; nothing to run by hand.
+- **Leaves technique to you:** tools take every value as input and measurements return numbers. Which steps, in
+  what order and how far, lives in your own skills and prompts.
+- **Stays in your folder:** it writes only `agentic/` (working files, logs) and `output/` (results) inside the target folder.
+- **Tested on real data:** used for gkkobservatory's own images on Windows 11 with PixInsight 1.9.5. Fixes found
+  along the way are in this build; see [CHANGELOG.md](CHANGELOG.md).
 
 ## Install
 
-Needs Node 22+ and PixInsight 1.9.5+. The same three steps work whether you or your agent runs them.
-
-**1. Install the connector** (this build, from GitHub):
+Needs Node 22+ and PixInsight 1.9.5+.
 
 ```sh
 npm install -g github:akshay87kumar/gkkobservatory-pixinsight-connector
-```
-
-**2. Register it** with your agent harness as the MCP server `pixinsight`. Claude Code:
-
-```sh
 claude mcp add -s user pixinsight -- pixinsight-connector
-```
-
-Any harness configured with an `mcpServers` JSON file (Cursor, Windsurf, Gemini CLI, Claude Desktop, Cline, Kiro):
-
-```json
-{ "mcpServers": { "pixinsight": { "command": "pixinsight-connector" } } }
-```
-
-Codex, OpenCode, VS Code and Zed use other shapes; each one, and where its file lives: [docs/setup.md](docs/setup.md).
-
-**3. Check the machine:**
-
-```sh
 pixinsight-connector doctor
 ```
 
-PixInsight and its watcher script start on the first tool call; there is nothing else to launch. Update by running the
-install command again; `npm install -g pixinsight-connector` goes back to the upstream release on npm. From pixinsight-mcp
-1.x: point your `pixinsight` entry at `pixinsight-connector` (not a second server) and `npm uninstall -g pixinsight-mcp`.
+Update by running the install command again; `npm install -g pixinsight-connector` goes back to the upstream release
+on npm. Other harnesses: [docs/setup.md](docs/setup.md).
 
-## Where files go
+## Docs
 
-The tools work in a target folder: the one `set_workspace` names, else `PIXINSIGHT_CONNECTOR_WORKSPACE`, else the
-folder the harness started in. The connector writes only `<target>/agentic/` (scratch, the bridge, call logs) and
-`<target>/output/`, never your home folder. Details and every environment variable: [docs/setup.md](docs/setup.md).
-
-## Tools, packs and skills
-
-- **Tools:** 78, grouped as images, processes, channels, tone, detail, masks, stars, narrowband, astrometry,
-  measurement, preview, PJSR execution, introspection and session. Full list: [docs/tools.md](docs/tools.md).
-- **Skills** hold the technique. Companion skills (environment preflight, dataset intake, a basic LRGB flow): [pixinsight-connector-skills](https://github.com/mxcoppell/pixinsight-connector-skills).
-- **Packs** are ES modules that add or replace tools at startup, listed in `PIXINSIGHT_CONNECTOR_PACKS`. A pack is
-  arbitrary code running with your privileges; only packs you configure load. See
-  [CONTRIBUTING.md](CONTRIBUTING.md#developing-a-pack).
-- **Models:** any with vision and reliable tool calling. Start with a Sonnet-class model (Claude Sonnet 5, GPT-6 Sol,
-  Gemini 3.8 Flash), then try cheaper ones (GPT-6 Luna, GLM-5.3-Flash, DeepSeek V4.1 Flash): prices and the list are in [docs/setup.md](docs/setup.md#models).
-
-## Contributing
-
-A PixInsight capability with no tool yet is one module in `src/tools/`, no registry: [CONTRIBUTING.md](CONTRIBUTING.md). Humans and agents are both welcome; `npm test` needs no PixInsight.
+[Tools](docs/tools.md) · [Setup](docs/setup.md) · [Troubleshooting](docs/troubleshooting.md) · [Contributing](CONTRIBUTING.md)
 
 <!-- crossplatform:start -->
 ## Cross-platform
@@ -110,11 +73,8 @@ A change that works on one OS and breaks another is a bug, not a limitation.
 Tests need no PixInsight and no astronomy software, so you can develop on any of the three.
 <!-- crossplatform:end -->
 
-## Troubleshooting
-
-Run `pixinsight-connector doctor` first. Common symptoms and fixes: [docs/troubleshooting.md](docs/troubleshooting.md).
-
 ## Credit and license
 
-This project began as [aescaffre/pixinsight-mcp](https://github.com/aescaffre/pixinsight-mcp) by Alain Escaffre;
-parts of the original file bridge and watcher script remain. MIT licensed: see [LICENSE](LICENSE).
+Built on [mxcoppell/pixinsight-connector](https://github.com/mxcoppell/pixinsight-connector) by Min Xie, which began as
+[aescaffre/pixinsight-mcp](https://github.com/aescaffre/pixinsight-mcp) by Alain Escaffre. MIT licensed: see [LICENSE](LICENSE).
+Not affiliated with or endorsed by Pleiades Astrophoto; PixInsight® is a registered trademark of Pleiades Astrophoto S.L.

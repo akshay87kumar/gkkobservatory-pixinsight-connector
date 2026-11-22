@@ -78,7 +78,8 @@ async function harness(errorMessage) {
   writeFileSync(path.join(dir, 'image.xisf'), '');
   const ctx = {
     pjsr: async () => ({ status: 'error', error: { message: errorMessage } }),
-    listImages: async () => OPEN_VIEWS.map((id) => ({ id, width: 10, height: 10, isColor: false })),
+    // Colour views: four tools refuse a mono view before sending anything, which these tests are not about.
+    listImages: async () => OPEN_VIEWS.map((id) => ({ id, width: 10, height: 10, isColor: true })),
   };
   const api = apiFrom(ctx, { workspace: { dir, scratchDir: path.join(dir, 'agentic', 'scratch'), outputDir: path.join(dir, 'output') } });
   const core = await buildCoreCatalog();

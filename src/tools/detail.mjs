@@ -6,6 +6,7 @@
 // tool in processes.mjs; its run_per_channel_abe lives in channels.mjs.
 // ============================================================================
 import { q, num, int, bool, fixed, closeViews } from './pjsr-args.mjs';
+import { PIXEL_ROWS } from './pixel-rows.mjs';
 import { createAdaptiveZoneMasks, ADAPTIVE_ZONE_IDS } from './zones.mjs';
 
 // ---------------------------------------------------------------------------
@@ -291,8 +292,13 @@ function highPassPass(n, { sigma, amount, softness, knee, oneMinusKnee, isColor 
 
 // Shell-texture measurement shared by the before/after passes: Sobel gradient energy over subject
 // pixels, and the median local std-dev of 16px blocks that are at least 30% subject.
+// It runs on its parameters, not on the snippet's variables (see pixel-rows.mjs), with a new luminance
+// cache for the image as it is when measured.
 const MEASURE_SHELL = `
     function measureShell() {
+      return measureShellOn(mcpLumCache(img, 16), W, H, step, bs, subTh, SOFTNESS, KNEE, ONE_MINUS_KNEE);
+    }
+    function measureShellOn(getLum, W, H, step, bs, subTh, SOFTNESS, KNEE, ONE_MINUS_KNEE) {
       var energy = 0, count = 0, maxLum = 0, protEngaged = 0;
       for (var y = 1; y < H-1; y += step) {
         for (var x = 1; x < W-1; x += step) {
@@ -309,6 +315,7 @@ const MEASURE_SHELL = `
             if (Math.exp(-SOFTNESS * Math.max(0, lum - KNEE) / ONE_MINUS_KNEE) < 0.5) protEngaged++;
           }
         }
+        mcpRowDone();
       }
       var sds = [];
       for (var by = 0; by < H - bs; by += bs) {
@@ -329,6 +336,7 @@ const MEASURE_SHELL = `
           var v = s2 / vals.length - mn*mn;
           if (v > 0) sds.push(Math.sqrt(v));
         }
+        mcpRowDone();
       }
       sds.sort(function(a,b){return a-b;});
       return {
@@ -385,13 +393,7 @@ async function shellDetailEnhance(api, viewId, input) {
     var isColor = img.isColor;
     var W = img.width, H = img.height;
     var SOFTNESS = ${softness}, KNEE = ${knee}, ONE_MINUS_KNEE = ${oneMinusKnee};
-
-    function getLum(px, py) {
-      if (isColor) {
-        return 0.2126 * img.sample(px, py, 0) + 0.7152 * img.sample(px, py, 1) + 0.0722 * img.sample(px, py, 2);
-      }
-      return img.sample(px, py);
-    }
+    ${PIXEL_ROWS}
 
     var bgMedian = img.median();
     var bgMAD = img.MAD();

@@ -10,6 +10,7 @@
 // derived from the pack's seti_stretch, which is not ported.
 // ============================================================================
 import { q, num, int, bool, oneOf, pjsrJson, fixed, lit } from './pjsr-args.mjs';
+import { PIXEL_ROWS } from './pixel-rows.mjs';
 
 // Shared PixelMath settings for an in-place, 64-bit, [0,1]-truncated run.
 const PM_INPLACE = 'PM.use64BitWorkingImage = true; PM.truncate = true; PM.truncateLower = 0; PM.truncateUpper = 1; PM.createNewImage = false;';
@@ -472,61 +473,70 @@ const continuousClamp = {
       var old = ImageWindow.windowById(tmpId);
       if (!old.isNull) old.forceClose();
 
-      var maskW = new ImageWindow(w, h, 1, 32, true, false, tmpId);
-      var maskImg = maskW.mainView.image;
-      var isColor = img.isColor;
-      maskW.mainView.beginProcess();
-      for (var y = 0; y < h; y++) {
-        for (var x = 0; x < w; x++) {
-          var lum = isColor
-            ? 0.2126 * img.sample(x, y, 0) + 0.7152 * img.sample(x, y, 1) + 0.0722 * img.sample(x, y, 2)
-            : img.sample(x, y);
-          maskImg.setSample(lum, x, y);
+      ${PIXEL_ROWS}
+      // Divides every sample of a mono image by s, a row at a time, in a function so the loop runs on
+      // its own variables (see pixel-rows.mjs).
+      function mcpDivideRows(maskImg, w, h, s) {
+        var maskRow = new Float64Array(w);
+        for (var y2 = 0; y2 < h; y2++) {
+          mcpGetRow(maskImg, y2, 0, maskRow);
+          for (var x2 = 0; x2 < w; x2++) maskRow[x2] = maskRow[x2] / s;
+          mcpSetRow(maskImg, y2, 0, maskRow);
+          mcpRowDone();
         }
       }
-      maskW.mainView.endProcess();
-
-      var conv = new Convolution;
-      conv.mode = Convolution.Parametric;
-      conv.sigma = blurSigma;
-      conv.shape = 2;
-      conv.aspectRatio = 1;
-      conv.rotationAngle = 0;
-      conv.executeOn(maskW.mainView);
-
-      // Normalize the blurred mask to 0-1
-      var mMax = maskImg.maximum();
-      if (mMax > 0) {
+      // The temporary luminance mask is closed whatever happens after it exists (a failed step,
+      // Pause/Abort), so it never stays open.
+      var maskW = new ImageWindow(w, h, 1, 32, true, false, tmpId);
+      try {
+        var maskImg = maskW.mainView.image;
+        // The Rec.709 luminance (colour) or the samples (mono), a row at a time.
+        var lumBufs = mcpLumBuffers(w);
         maskW.mainView.beginProcess();
-        for (var y2 = 0; y2 < h; y2++) {
-          for (var x2 = 0; x2 < w; x2++) {
-            maskImg.setSample(maskImg.sample(x2, y2) / mMax, x2, y2);
-          }
+        for (var y = 0; y < h; y++) {
+          mcpSetRow(maskImg, y, 0, mcpLumRow(img, y, lumBufs));
+          mcpRowDone();
         }
         maskW.mainView.endProcess();
+
+        var conv = new Convolution;
+        conv.mode = Convolution.Parametric;
+        conv.sigma = blurSigma;
+        conv.shape = 2;
+        conv.aspectRatio = 1;
+        conv.rotationAngle = 0;
+        conv.executeOn(maskW.mainView);
+
+        // Normalize the blurred mask to 0-1
+        var mMax = maskImg.maximum();
+        if (mMax > 0) {
+          maskW.mainView.beginProcess();
+          mcpDivideRows(maskImg, w, h, mMax);
+          maskW.mainView.endProcess();
+        }
+
+        maskW.show();
+
+        var knee = '${minClamp} + ${range} * (1 - ' + tmpId + ')';
+        var clampExpr;
+        if (mode === 'soft') {
+          ${mode === 'soft' ? `var hd = '${headroom}';
+          var rt = '${rate}';` : ''}
+          clampExpr = 'iif($T > (' + knee + '), (' + knee + ') + ' + hd + ' * (1 - exp(-' + rt + ' * ($T - (' + knee + ')) / ' + hd + ')), $T)';
+        } else {
+          clampExpr = 'min($T, ' + knee + ')';
+        }
+
+        var PM = new PixelMath;
+        PM.expression = clampExpr;
+        PM.expression1 = clampExpr;
+        PM.expression2 = clampExpr;
+        PM.useSingleExpression = false;
+        ${PM_INPLACE}
+        PM.executeOn(src.mainView);
+      } finally {
+        maskW.forceClose();
       }
-
-      maskW.show();
-
-      var knee = '${minClamp} + ${range} * (1 - ' + tmpId + ')';
-      var clampExpr;
-      if (mode === 'soft') {
-        ${mode === 'soft' ? `var hd = '${headroom}';
-        var rt = '${rate}';` : ''}
-        clampExpr = 'iif($T > (' + knee + '), (' + knee + ') + ' + hd + ' * (1 - exp(-' + rt + ' * ($T - (' + knee + ')) / ' + hd + ')), $T)';
-      } else {
-        clampExpr = 'min($T, ' + knee + ')';
-      }
-
-      var PM = new PixelMath;
-      PM.expression = clampExpr;
-      PM.expression1 = clampExpr;
-      PM.expression2 = clampExpr;
-      PM.useSingleExpression = false;
-      ${PM_INPLACE}
-      PM.executeOn(src.mainView);
-
-      maskW.forceClose();
 
       var finalImg = src.mainView.image;
       JSON.stringify({ median: finalImg.median(), max: finalImg.maximum(), blur_sigma: blurSigma });

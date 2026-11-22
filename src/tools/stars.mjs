@@ -78,7 +78,7 @@ const starProtectedBlend = {
     const minFrac = num(input.min_strength_fraction, undefined, 'min_strength_fraction');
     const maxValue = num(input.max_value, undefined, 'max_value');
     ordered(low, high, 'core_threshold_low', 'core_threshold_high');
-    const mismatch = await sizeMismatch(api, 'star_protected_blend', [['target_id', targetId], ['stars_id', starsId], ...(preId ? [['pre_star_id', preId]] : [])]);
+    const mismatch = await sizeMismatch(api, 'star_protected_blend', [['target_id', targetId], ['stars_id', starsId], ...(preId ? [['pre_star_id', preId]] : [])], { color: ['target_id', 'stars_id', 'pre_star_id'] });
     if (mismatch) return { isError: true, text: mismatch };
 
     const preStat = await api.stats(targetId);
@@ -148,7 +148,7 @@ const restoreStarColor = {
     const end = num(input.restore_end, undefined, 'restore_end');
     const maxValue = num(input.max_value, undefined, 'max_value');
     ordered(start, end, 'restore_start', 'restore_end');
-    const mismatch = await sizeMismatch(api, 'restore_star_color', [['target_id', targetId], ['pre_star_id', preId]]);
+    const mismatch = await sizeMismatch(api, 'restore_star_color', [['target_id', targetId], ['pre_star_id', preId]], { color: ['target_id', 'pre_star_id'] });
     if (mismatch) return { isError: true, text: mismatch };
     const preStat = await api.stats(targetId);
     const r = await api.pjsr(perChannelPixelMath(targetId, restoreExprs(preId, start, end, maxValue), 'Lp, Lb, restored, wr'));
