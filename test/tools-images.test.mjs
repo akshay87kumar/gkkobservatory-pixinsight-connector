@@ -32,6 +32,19 @@ test('open_image opens the file and reports the new view id', async () => {
   assert.match(out.text, /NGC891_L/);
 });
 
+test('open_image with view_id refuses an id that is open, then names the opened view; an invalid id is refused before anything runs', async () => {
+  const { ctx, emitted } = createFakeBridge({ replies: ['Ha_master'] });
+  ctx.listImages = async () => [{ id: 'Ha_master', width: 100, height: 100, isColor: false }];
+  const out = await byName.open_image.handler(apiFrom(ctx), { file_path: imageFile('NGC891_L.xisf'), view_id: 'Ha_master' });
+  const refuse = emitted[0].indexOf('if (!ImageWindow.windowById("Ha_master").isNull) throw');
+  assert.ok(refuse > 0 && refuse < emitted[0].indexOf('ImageWindow.open('), 'the id is checked before the file is opened');
+  assert.ok(emitted[0].indexOf('__wins[0].mainView.id = "Ha_master";') > emitted[0].indexOf('ImageWindow.open('), 'and set after it');
+  assert.match(out.text, /Opened as view id "Ha_master"/);
+  const sent = emitted.length;
+  await assert.rejects(byName.open_image.handler(apiFrom(ctx), { file_path: imageFile('NGC891_L.xisf'), view_id: '2bad id' }), /view identifier/);
+  assert.equal(emitted.length, sent);
+});
+
 test('close_image closes the window by id', async () => {
   const { ctx, emitted } = createFakeBridge();
   await byName.close_image.handler(apiFrom(ctx), { view_id: 'RGB' });

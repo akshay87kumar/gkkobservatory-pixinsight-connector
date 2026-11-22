@@ -5,6 +5,7 @@
 // mask builders live in ./zones.mjs.
 // ============================================================================
 import { fixed } from './pjsr-args.mjs';
+import { SAFE_CLOSE_PJSR } from './views.mjs';
 import { createZoneMasks, createAdaptiveZoneMasks } from './zones.mjs';
 
 const q = (s) => JSON.stringify(String(s));
@@ -118,14 +119,14 @@ const removeMask = {
 
 const closeMask = {
   name: 'close_mask',
-  description: 'Close and delete a mask window to free memory.',
+  description: 'Close and delete a mask window to free memory. It is removed as the mask of every window that uses it before it closes.',
   inputSchema: {
     type: 'object',
     properties: { mask_id: { type: 'string', description: 'Mask view ID to close' } },
     required: ['mask_id'],
   },
   async handler(api, input) {
-    await run(api, `var mw = ImageWindow.windowById(${q(input.mask_id)}); if (!mw.isNull) mw.forceClose();`);
+    await run(api, `${SAFE_CLOSE_PJSR} var mw = ImageWindow.windowById(${q(input.mask_id)}); if (!mw.isNull) mcpSafeClose(mw);`);
     return { text: `Mask ${input.mask_id} closed` };
   },
 };

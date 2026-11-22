@@ -15,7 +15,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import vm from 'node:vm';
+import { world, LUM } from './pjsr-world.mjs';
 import { PIXEL_ROWS } from '../src/tools/pixel-rows.mjs';
 import { createZoneMasks, createAdaptiveZoneMasks } from '../src/tools/zones.mjs';
 import { tools as narrowbandTools } from '../src/tools/narrowband.mjs';
@@ -24,136 +24,6 @@ import { tools as starTools } from '../src/tools/stars.mjs';
 import { tools as imageTools } from '../src/tools/images.mjs';
 
 const byName = Object.fromEntries([...narrowbandTools, ...toneTools, ...starTools, ...imageTools].map((t) => [t.name, t]));
-const LUM = (r, g, b) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
-
-// Deterministic pixel values: a dark noisy sky with a bright blob, so thresholds and percentiles have
-// something to find.
-function fill(img, seed = 1) {
-  let s = seed;
-  const rnd = () => ((s = (s * 1103515245 + 12345) % 2147483648) / 2147483648);
-  for (let c = 0; c < img.numberOfChannels; c++) {
-    for (let y = 0; y < img.height; y++) {
-      for (let x = 0; x < img.width; x++) {
-        const d2 = ((x - img.width * 0.45) ** 2 + (y - img.height * 0.55) ** 2) / (2 * 22 * 22);
-        img.setSample(0.04 + 0.03 * rnd() + (0.85 - 0.1 * c) * Math.exp(-d2) * (0.9 + 0.1 * rnd()), x, y, c);
-      }
-    }
-  }
-  return img;
-}
-
-// The stand-in PJSR world. Images store float32 samples, as a 32-bit PixInsight image does.
-// `abortAfterYields` makes processEvents() throw MCP_ABORTED on that call, as the watcher's does once
-// Pause/Abort is pressed.
-function world({ abortAfterYields = Infinity } = {}) {
-  const open = new Map();
-  const calls = { yields: 0, getSamples: 0, executed: [], saved: [] };
-  const files = new Set();
-  const NULL_WINDOW = { isNull: true };
-  class Rect { constructor(x0, y0, x1, y1) { Object.assign(this, { x0, y0, x1, y1 }); } }
-  class Image {
-    constructor(width, height, n) {
-      Object.assign(this, { width, height, numberOfChannels: n, isColor: n >= 3 });
-      this.data = Array.from({ length: n }, () => new Float32Array(width * height));
-    }
-    check(c) { if (!(c >= 0 && c < this.numberOfChannels)) throw new Error(`Invalid channel index '${c}'`); }
-    sample(x, y, c = 0) { this.check(c); return this.data[c][y * this.width + x]; }
-    setSample(v, x, y, c = 0) { this.check(c); this.data[c][y * this.width + x] = v; }
-    getSamples(buf, r, c = 0) {
-      this.check(c); calls.getSamples++;
-      let k = 0;
-      for (let y = r.y0; y < r.y1; y++) for (let x = r.x0; x < r.x1; x++) buf[k++] = this.data[c][y * this.width + x];
-    }
-    setSamples(buf, r, c = 0) {
-      this.check(c);
-      let k = 0;
-      for (let y = r.y0; y < r.y1; y++) for (let x = r.x0; x < r.x1; x++) this.data[c][y * this.width + x] = buf[k++];
-    }
-    all() { return this.data.flatMap((d) => [...d]); }
-    maximum() { return Math.max(...this.all()); }
-    minimum() { return Math.min(...this.all()); }
-    median() { const v = this.all().sort((a, b) => a - b); return v[Math.floor(v.length / 2)]; }
-    MAD() { const m = this.median(); const v = this.all().map((x) => Math.abs(x - m)).sort((a, b) => a - b); return v[Math.floor(v.length / 2)]; }
-    assign(other) { this.data = other.data.map((d) => new Float32Array(d)); }
-    resetChannelSelection() {}
-  }
-  const uniqueId = (id) => { let u = id, n = 1; while (open.has(u)) u = id + n++; return u; };
-  class ImageWindow {
-    static windowById(id) { return open.get(id) ?? NULL_WINDOW; }
-    constructor(width, height, n, bits, isFloat, color, id) {
-      this.isNull = false;
-      this.keywords = [];
-      this.hasAstrometricSolution = false;
-      const win = this;
-      let viewId = uniqueId(id);
-      this.mainView = {
-        window: win,
-        image: new Image(width, height, n),
-        properties: [],
-        get id() { return viewId; },
-        set id(v) {
-          if (open.has(v) && open.get(v) !== win) throw new Error(`View.id: identifier already in use: ${v}`);
-          open.delete(viewId); viewId = v; open.set(v, win);
-        },
-        beginProcess() {}, endProcess() {},
-      };
-      open.set(viewId, this);
-    }
-    show() { this.shown = true; }
-    forceClose() { open.delete(this.mainView.id); this.closed = true; }
-    get mask() { return this.attached ?? NULL_WINDOW; }
-    set mask(w) { this.attached = w; }
-    removeMask() { this.attached = null; }
-    copyAstrometricSolution() {}
-    saveAs(file) {
-      if (calls.saveThrows) throw new Error('disk full');
-      calls.saved.push({ file, id: this.mainView.id });
-      files.add(file);
-      return true;
-    }
-  }
-  // Processes do not change pixels here, so a mask is compared as the pixel loop left it. Each run is
-  // recorded with a copy of every open temporary window's channel 0, so a temporary window closed
-  // later can still be checked.
-  const process = (name) => class {
-    executeOn(view) {
-      const snapshot = {};
-      for (const [id, w] of open) if (id.startsWith('__')) snapshot[id] = new Float32Array(w.mainView.image.data[0]);
-      calls.executed.push({ name, view: view.id, snapshot });
-      return true;
-    }
-  };
-  const sandbox = {
-    ImageWindow, Rect,
-    Convolution: Object.assign(process('Convolution'), { Parametric: 1 }),
-    PixelMath: process('PixelMath'),
-    SampleFormatConversion: Object.assign(process('SampleFormatConversion'), { To8Bit: 1, To16Bit: 2 }),
-    File: { exists: (f) => files.has(f), remove: (f) => files.delete(f) },
-    FileInfo: class { constructor() { this.size = 1048576; } },
-    processEvents() {
-      if (++calls.yields >= abortAfterYields) throw new Error('MCP_ABORTED: Pause/Abort was pressed');
-    },
-  };
-  const ctx = vm.createContext(sandbox);
-  const run = (code) => vm.runInContext(code, ctx);
-  // The api a handler receives: pjsr runs the emitted code in this world.
-  const api = (extra = {}) => ({
-    pjsr: async (code) => {
-      try {
-        const v = run(code);
-        const text = v === undefined ? 'Script executed.' : String(v);
-        return { status: 'success', result: text, outputs: { consoleOutput: text, consoleErrors: [] } };
-      } catch (e) {
-        return { status: 'error', error: { message: `Script error: ${e.message}` } };
-      }
-    },
-    listImages: async () => [...open.values()].map((w) => ({ id: w.mainView.id, width: w.mainView.image.width, height: w.mainView.image.height, isColor: w.mainView.image.isColor })),
-    stats: async () => ({ median: 0.1, max: 0.9 }),
-    ...extra,
-  });
-  const add = (id, width, height, n, seed) => fill(new ImageWindow(width, height, n, 32, true, n >= 3, id).mainView.image, seed);
-  return { open, calls, run, api, add, ImageWindow };
-}
 
 const f32 = (v) => Math.fround(v);
 function assertImageEquals(actual, expectedAt, what) {

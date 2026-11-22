@@ -55,6 +55,7 @@ function inputFor(def, dir) {
     measure_star_layer: { levels: [0.98] },
     multi_scale_enhance: { mask_clip_low: 0.06 }, // needs [0, 1)
     dynamic_narrowband_blend: { mask_clip: 0.04 }, // needs [0, 1)
+    get_grid_stats: { tiles: [2, 2] }, // needs tiles or tile_size
     resample_image: { factor: 2 }, // integer mode needs a whole factor >= 2
     align_files: { reference_file: path.join(dir, 'image.xisf'), target_files: [path.join(dir, 'image.xisf')], matrix_only: true },
   }[def.name] ?? {};
