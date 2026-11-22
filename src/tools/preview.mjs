@@ -96,37 +96,38 @@ async function handler(api, input) {
     var stfRows = ${stfRowsJs};
     var w = crop ? crop[2] - crop[0] : img.width, h = crop ? crop[3] - crop[1] : img.height;
     var scale = ${opt.downsample ? `1 / ${opt.downsample}` : 'Math.min(1, 2048 / Math.max(w, h))'};
-    var tmp = new ImageWindow(img.width, img.height, img.numberOfChannels, 32, true, img.isColor, 'preview_show_tmp');
-    tmp.mainView.beginProcess();
-    tmp.mainView.image.assign(img);
-    tmp.mainView.endProcess();
-    if (crop) {
-      var C = new Crop;
-      C.mode = Crop.AbsolutePixels;
-      C.leftMargin = -crop[0]; C.topMargin = -crop[1]; C.rightMargin = -(img.width - crop[2]); C.bottomMargin = -(img.height - crop[3]);
-      if (C.noGUIMessages !== undefined) C.noGUIMessages = true;
-      C.executeOn(tmp.mainView);
+    // Only the region is copied (a crop of a full-size copy cost a full-size allocation), and the
+    // temporary window is closed whatever happens.
+    var old = ImageWindow.windowById('preview_show_tmp');
+    if (!old.isNull) old.forceClose();
+    var tmp = new ImageWindow(w, h, img.numberOfChannels, 32, true, img.isColor, 'preview_show_tmp');
+    var saved = false, p = ${q(toPixPath(previewPath))};
+    try {
+      tmp.mainView.beginProcess();
+      if (crop) tmp.mainView.image.assign(img, new Rect(crop[0], crop[1], crop[2], crop[3]));
+      else tmp.mainView.image.assign(img);
+      tmp.mainView.endProcess();
+      if (stfRows) {
+        // An STF row is [m, c0, c1, r0, r1]; a HistogramTransformation row is [c0, m, c1, r0, r1].
+        var ht = function (s) { return [s[1], s[0], s[2], s[3], s[4]]; }, id = [0, 0.5, 1, 0, 1];
+        var HT = new HistogramTransformation;
+        HT.H = img.isColor ? [ht(stfRows[0]), ht(stfRows[1]), ht(stfRows[2]), id, id] : [id, id, id, ht(stfRows[0]), id];
+        if (!HT.executeOn(tmp.mainView)) throw new Error('HistogramTransformation did not run on the preview copy');
+      }
+      if (scale < 1) {
+        var R = new Resample;
+        R.mode = Resample.RelativeDimensions;
+        R.xSize = scale; R.ySize = scale;
+        R.absoluteMode = Resample.ForceWidthAndHeight;
+        R.interpolation = Resample.MitchellNetravaliFilter;
+        if (R.noGUIMessages !== undefined) R.noGUIMessages = true;
+        if (!R.executeOn(tmp.mainView)) throw new Error('Resample did not run on the preview copy');
+      }
+      if (File.exists(p)) File.remove(p);
+      saved = tmp.saveAs(p, false, false, false, false);
+    } finally {
+      tmp.forceClose();
     }
-    if (stfRows) {
-      // An STF row is [m, c0, c1, r0, r1]; a HistogramTransformation row is [c0, m, c1, r0, r1].
-      var ht = function (s) { return [s[1], s[0], s[2], s[3], s[4]]; }, id = [0, 0.5, 1, 0, 1];
-      var HT = new HistogramTransformation;
-      HT.H = img.isColor ? [ht(stfRows[0]), ht(stfRows[1]), ht(stfRows[2]), id, id] : [id, id, id, ht(stfRows[0]), id];
-      HT.executeOn(tmp.mainView);
-    }
-    if (scale < 1) {
-      var R = new Resample;
-      R.mode = Resample.RelativeDimensions;
-      R.xSize = scale; R.ySize = scale;
-      R.absoluteMode = Resample.ForceWidthAndHeight;
-      R.interpolation = Resample.MitchellNetravaliFilter;
-      if (R.noGUIMessages !== undefined) R.noGUIMessages = true;
-      R.executeOn(tmp.mainView);
-    }
-    var p = ${q(toPixPath(previewPath))};
-    if (File.exists(p)) File.remove(p);
-    var saved = tmp.saveAs(p, false, false, false, false);
-    tmp.forceClose();
     if (!saved) throw new Error('PixInsight did not write ' + p + ' (saveAs returned false)');
   `);
   if (r.status === 'error') throw new Error(r.error?.message || JSON.stringify(r.error));

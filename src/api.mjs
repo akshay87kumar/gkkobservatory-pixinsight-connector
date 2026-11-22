@@ -17,24 +17,27 @@ const q = (s) => JSON.stringify(String(s));
 
 // stats(viewId) -> { median, mad, min, max, perChannel? } via PJSR; throws when PixInsight reports
 // an error. The one statistics implementation: core tools read statistics through api.stats too.
+// Every statistic names its region (the whole image) and channels (R, G and B, or the gray channel;
+// never an alpha channel) explicitly: a selection left on the image by an earlier script persists,
+// and the selection-dependent forms would compute on it.
 async function stats(api, viewId) {
   const r = await api.pjsr(`
     var v = ImageWindow.windowById(${q(viewId)}).mainView;
     var img = v.image;
+    var all = new Rect(0, 0, img.width, img.height), last = img.isColor ? 2 : 0;
     var result = {};
     if (img.isColor) {
       var meds = [], mads = [];
-      for (var c = 0; c < img.numberOfChannels; c++) { img.selectedChannel = c; meds.push(img.median()); mads.push(img.MAD()); }
-      img.resetSelections();
+      for (var c = 0; c < 3; c++) { var m = img.median(all, c, c); meds.push(m); mads.push(img.MAD(m, all, c, c)); }
       result.median = (meds[0] + meds[1] + meds[2]) / 3;
       result.mad = (mads[0] + mads[1] + mads[2]) / 3;
       result.perChannel = { R: { median: meds[0], mad: mads[0] }, G: { median: meds[1], mad: mads[1] }, B: { median: meds[2], mad: mads[2] } };
     } else {
-      result.median = img.median();
-      result.mad = img.MAD();
+      result.median = img.median(all, 0, 0);
+      result.mad = img.MAD(result.median, all, 0, 0);
     }
-    result.min = img.minimum();
-    result.max = img.maximum();
+    result.min = img.minimum(all, 0, last);
+    result.max = img.maximum(all, 0, last);
     JSON.stringify(result);
   `);
   if (r.status === 'error') throw new Error(r.error?.message || JSON.stringify(r.error));

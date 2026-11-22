@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { toPixPath } from '../platform.mjs';
 import { num, int, vid, fixed, newImages, closeViews } from './pjsr-args.mjs';
+import { COPY_WINDOW_PJSR, SAFE_CLOSE_PJSR } from './views.mjs';
 
 const q = (s) => JSON.stringify(String(s));
 
@@ -66,20 +67,16 @@ const combineChannels = {
 
     const afterImgs = await api.listImages();
     const newImg = afterImgs.find((i) => i.isColor && !beforeIds.includes(i.id));
-    if (!newImg) {
-      const anyColor = afterImgs.find((i) => i.isColor);
-      if (anyColor) {
-        if (anyColor.id !== input.output_id) {
-          await run(api, `var w = ImageWindow.windowById(${q(anyColor.id)}); if (!w.isNull) w.mainView.id = ${q(input.output_id)};`);
-        }
-        return { text: `Combined into ${input.output_id} (${anyColor.width}x${anyColor.height})` };
-      }
-      return { isError: true, text: 'ChannelCombination returned true but no color image found' };
+    // No other open colour image is taken for the result: renaming one would report a combination
+    // that did not happen and rename an unrelated view.
+    if (!newImg) return { isError: true, text: 'ChannelCombination returned true but no new colour image appeared; no view was renamed.' };
+    let id = newImg.id;
+    if (id !== input.output_id) {
+      const renamed = await run(api, `var w = ImageWindow.windowById(${q(newImg.id)}); if (!w.isNull) w.mainView.id = ${q(input.output_id)}; w.mainView.id;`);
+      id = String(renamed.result ?? id).trim() || id;
     }
-    if (newImg.id !== input.output_id) {
-      await run(api, `var w = ImageWindow.windowById(${q(newImg.id)}); if (!w.isNull) w.mainView.id = ${q(input.output_id)};`);
-    }
-    return { text: `Combined into ${input.output_id} (${newImg.width}x${newImg.height})` };
+    const taken = id !== input.output_id ? ` (${input.output_id} was taken, so PixInsight named it ${id})` : '';
+    return { text: `Combined into ${id} (${newImg.width}x${newImg.height})${taken}` };
   },
 };
 
@@ -101,18 +98,31 @@ const alignToReference = {
     const tmpTgt = path.join(tmpDir, `${safeFileStem(input.target_id)}.xisf`);
 
     for (const [viewId, filePath] of [[input.reference_id, tmpRef], [input.target_id, tmpTgt]]) {
+      // A copy is saved, never the view itself: saving a view ties it to the file and marks it
+      // unmodified, so PixInsight would no longer warn about its unsaved changes.
       const saveR = await api.pjsr(`
+        ${SAFE_CLOSE_PJSR}
+        ${COPY_WINDOW_PJSR}
         var w = ImageWindow.windowById(${q(viewId)});
         if (w.isNull) throw new Error('View not found: ' + ${q(viewId)});
         var p = ${q(toPixPath(filePath))};
         if (File.exists(p)) File.remove(p);
-        if (!w.saveAs(p, false, false, false, false)) throw new Error('PixInsight did not write ' + p + ' (saveAs returned false)');
-        if (w.mainView.id !== ${q(viewId)}) w.mainView.id = ${q(viewId)};
+        var old = ImageWindow.windowById('__align_copy'); if (!old.isNull) mcpSafeClose(old);
+        var c = mcpCopyWindow(w, '__align_copy');
+        try {
+          if (!c.saveAs(p, false, false, false, false)) throw new Error('PixInsight did not write ' + p + ' (saveAs returned false)');
+        } finally {
+          c.forceClose();
+        }
       `);
       if (saveR.status === 'error') return { isError: true, text: `Failed to save ${viewId}: ${saveR.error?.message}` };
     }
 
+    // The previous run's output is removed first: if this run fails to match, StarAlignment (with
+    // onError Continue) can still return true, and an old file must not be taken for this result.
+    const staleOutput = path.join(tmpDir, `aligned_${input.target_id}.xisf`);
     const saResult = await api.pjsr(`
+      if (File.exists(${q(toPixPath(staleOutput))})) File.remove(${q(toPixPath(staleOutput))});
       var P = new StarAlignment;
       P.referenceImage = ${q(toPixPath(tmpRef))};
       P.referenceIsFile = true;

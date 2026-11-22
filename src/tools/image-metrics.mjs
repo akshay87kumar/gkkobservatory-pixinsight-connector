@@ -50,8 +50,12 @@ export async function measureStars(api, viewId) {
 
     // Find stars by scanning for bright local maxima (no StarDetector — it crashes on getIntensity)
     // Scan every 16th pixel, find peaks above background + 5*MAD, verify local maximum in 5x5
-    var bgMedian = img.median();
-    var bgMAD = img.MAD();
+    // Over the whole image and its colour (or gray) channels, whatever selection an earlier script left.
+    var __all = new Rect(0, 0, img.width, img.height), __last = isColor ? 2 : 0;
+    var bgMedian = img.median(__all, 0, __last);
+    var bgMAD = img.MAD(bgMedian, __all, 0, __last);
+    // The sky level in the luminance the star profiles are read in: half maximum is half way from it.
+    var bgLum = isColor ? 0.2126 * img.median(__all, 0, 0) + 0.7152 * img.median(__all, 1, 1) + 0.0722 * img.median(__all, 2, 2) : bgMedian;
     var threshold = bgMedian + 5 * bgMAD;
     var step = 16;
     var halfBox = 10;
@@ -117,8 +121,8 @@ export async function measureStars(api, viewId) {
       var s = topStars[i];
       var cx = s.x, cy = s.y;
 
-      // FWHM: half-max radius in 4 directions, the crossing interpolated between the samples either side
-      var halfMax = s.peak / 2;
+      // FWHM: half-max radius in 4 directions (half way between the sky level and the peak), the crossing interpolated between the samples either side
+      var halfMax = bgLum + (s.peak - bgLum) / 2;
       var radii = [];
       var dirs = [[1,0],[0,1],[-1,0],[0,-1]];
       for (var d = 0; d < 4; d++) {
@@ -176,13 +180,13 @@ export async function measureStars(api, viewId) {
       starsMeasured: fwhms.length,
       medianFWHM: medFWHM,
       colorDiversity: medColorDiv,
-      fwhms: fwhms.slice(0, 10),
-      colorDivs: colorDivs.slice(0, 10),
+      fwhms: fwhms,
+      colorDivs: colorDivs,
       medianPeak: medianPeak,
       p25Peak: p25Peak,
       bgMedian: bgMedian,
       starBgContrast: starBgContrast,
-      starPeaks: starPeaks.slice(0, 10)
+      starPeaks: starPeaks
     });
   `, 'measure_stars', 'medianFWHM');
   return {
@@ -334,8 +338,8 @@ export async function measureRinging(api, viewId, minAmplitude) {
     var blockSize = 64;
     var bestMean = 0;
     var bestX = 0, bestY = 0;
-    for (var by = 0; by < img.height - blockSize; by += blockSize) {
-      for (var bx = 0; bx < img.width - blockSize; bx += blockSize) {
+    for (var by = 0; by + blockSize <= img.height; by += blockSize) {
+      for (var bx = 0; bx + blockSize <= img.width; bx += blockSize) {
         img.selectedRect = new Rect(bx, by, bx + blockSize, by + blockSize);
         if (img.isColor) {
           // Use luminance approximation
@@ -516,8 +520,8 @@ export async function measureCoreClipping(api, viewId, level) {
     var blockSize = 64;
     var bestMean = 0;
     var bestX = 0, bestY = 0;
-    for (var by = 0; by < img.height - blockSize; by += blockSize) {
-      for (var bx = 0; bx < img.width - blockSize; bx += blockSize) {
+    for (var by = 0; by + blockSize <= img.height; by += blockSize) {
+      for (var bx = 0; bx + blockSize <= img.width; bx += blockSize) {
         img.selectedRect = new Rect(bx, by, bx + blockSize, by + blockSize);
         if (img.isColor) {
           var chMeans = [];
@@ -624,8 +628,8 @@ export async function measureClippedBlocks(api, viewId, { level, blockFraction, 
     var level = ${lvl};
     var blockFraction = ${frac};
 
-    for (var by = 0; by < img.height - blockSize; by += blockSize) {
-      for (var bx = 0; bx < img.width - blockSize; bx += blockSize) {
+    for (var by = 0; by + blockSize <= img.height; by += blockSize) {
+      for (var bx = 0; bx + blockSize <= img.width; bx += blockSize) {
         totalBlocks++;
         var aboveInBlock = 0;
         var pixelsInBlock = 0;
@@ -1051,8 +1055,8 @@ async function shellTexture(api, viewId, roi) {
       // 1. Local stddev in 16x16 blocks within shell zone
       var blockSize = 16;
       var blockStdDevs = [];
-      for (var by = Math.max(0, roiCy - roiR); by < Math.min(H - blockSize, roiCy + roiR); by += blockSize) {
-        for (var bx = Math.max(0, roiCx - roiR); bx < Math.min(W - blockSize, roiCx + roiR); bx += blockSize) {
+      for (var by = Math.max(0, roiCy - roiR); by < roiCy + roiR && by + blockSize <= H; by += blockSize) {
+        for (var bx = Math.max(0, roiCx - roiR); bx < roiCx + roiR && bx + blockSize <= W; bx += blockSize) {
           // Check if block center is in ROI
           var bcx = bx + blockSize/2, bcy = by + blockSize/2;
           var ddx = bcx - roiCx, ddy = bcy - roiCy;
@@ -1208,8 +1212,8 @@ export async function measureSubjectDetail(api, viewId) {
     var bgSamples = [];
     var subjectSamples = [];
 
-    for (var by = 0; by < img.height - blockSize; by += blockSize) {
-      for (var bx = 0; bx < img.width - blockSize; bx += blockSize) {
+    for (var by = 0; by + blockSize <= img.height; by += blockSize) {
+      for (var bx = 0; bx + blockSize <= img.width; bx += blockSize) {
         img.selectedRect = new Rect(bx, by, bx + blockSize, by + blockSize);
         var blockMed;
         if (img.isColor) {

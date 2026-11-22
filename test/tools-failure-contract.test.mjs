@@ -33,7 +33,7 @@ const OPEN_VIEWS = ['V1', 'V2', 'V3', 'M1'];
 // make invalid spelled out.
 function inputFor(def, dir) {
   const overrides = {
-    pixelmath_new_image: { color: 'gray', expression: 'V1' },
+    pixelmath_new_image: { color: 'gray', expression: 'V1', output_id: 'V2' }, // output_id may not be size_from
     run_mgc: { mars_files: [path.join(dir, 'fake.xmars')], filter: 'L' }, // the harness's views are mono
     export_image: { file_path: 'out.png' },
     run_pjsr_file: { path: path.join(dir, 'snippet.js') },
@@ -56,6 +56,7 @@ function inputFor(def, dir) {
     multi_scale_enhance: { mask_clip_low: 0.06 }, // needs [0, 1)
     dynamic_narrowband_blend: { mask_clip: 0.04 }, // needs [0, 1)
     get_grid_stats: { tiles: [2, 2] }, // needs tiles or tile_size
+    clone_image: { clone_id: 'V2' }, // may not be the source itself
     resample_image: { factor: 2 }, // integer mode needs a whole factor >= 2
     align_files: { reference_file: path.join(dir, 'image.xisf'), target_files: [path.join(dir, 'image.xisf')], matrix_only: true },
   }[def.name] ?? {};

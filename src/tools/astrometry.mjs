@@ -76,6 +76,15 @@ function plateSolveScript(opts) {
       __res.expectedScale = m.resolution > 0 ? m.resolution * 3600 : null;
       if (m.ra === undefined || m.ra === null || isNaN(m.ra) || m.dec === undefined || m.dec === null || isNaN(m.dec))
         throw new Error('No RA/Dec seed: pass ra_deg and dec_deg (approximate is fine, within a fraction of the field).');
+      // ImageSolver's metadata starts at 1000 mm and 7.4 um, so m.resolution is never empty: whether a
+      // real scale exists is decided from the inputs and from what the image itself carries.
+      var __kw = w.keywords;
+      function __hasKw(names) { for (var k = 0; k < __kw.length; ++k) if (names.indexOf(__kw[k].name) >= 0) return true; return false; }
+      function __imgFocal() { return __hasKw(['FOCALLEN', 'FOCAL']) || w.mainView.hasProperty('Instrument:Telescope:FocalLength'); }
+      function __imgPix() { return __hasKw(['XPIXSZ', 'PIXSIZE']) || w.mainView.hasProperty('Instrument:Sensor:XPixelSize'); }
+      var __scaleKnown = __o.scale !== null || w.hasAstrometricSolution || __hasKw(['CDELT1', 'CD1_1', 'PIXSCALE', 'SCALE'])
+        || ((__o.focal !== null || __imgFocal()) && (__o.pixsz !== null || __imgPix()));
+      if (!__scaleKnown) throw new Error('No scale seed: the image carries no focal length and pixel size (FOCALLEN, XPIXSZ) and none was given; pass pixel_scale (arcsec/px) or focal_length_mm + pixel_size_um. ImageSolver would otherwise assume 1000 mm and 7.4 um.');
       if (!(m.resolution > 0)) throw new Error('No scale seed: pass pixel_scale (arcsec/px) or focal_length_mm + pixel_size_um.');
       e.solverCfg.catalogMode = CatalogMode.LocalXPSDServer;
       e.solverCfg.catalog = 'GaiaDR3SP_XPSD';

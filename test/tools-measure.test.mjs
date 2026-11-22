@@ -191,7 +191,7 @@ test('measure_stars keeps the pack FWHM computation: 16 px scan over median + 5 
   await byName.measure_stars.handler(api, { view_id: 'RGB' });
   for (const line of [
     'var threshold = bgMedian + 5 * bgMAD;', 'var step = 16;', 'var halfBox = 10;', 'if (dist < 20) { isDupe = true; break; }',
-    'if (stars.length >= 100) break;', 'var topStars = stars.slice(0, 30);', 'var halfMax = s.peak / 2;',
+    'if (stars.length >= 100) break;', 'var topStars = stars.slice(0, 30);', 'var halfMax = bgLum + (s.peak - bgLum) / 2;',
     'if (v < halfMax) { radii.push((r - 1) + (prev - halfMax) / (prev - v)); break; }', 'if (radii.length >= 2) {', 'fwhms.push(avgRadius * 2); // FWHM = 2 * half-max radius',
     'var medFWHM = fwhms.length > 0 ? fwhms[Math.floor(fwhms.length / 2)] : 0;',
   ]) assert.ok(emitted[0].includes(line), line);
@@ -209,19 +209,20 @@ test('measure_stars measured on a synthetic star field: disc stars of radius 2 c
   assert.equal(out.stars_measured, centers.length);
   const lum = (v) => 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
   const peak = lum(star), bg = lum([0.05, 0.05, 0.05]);
-  assert.ok(Math.abs(out.median_fwhm_px - 2 * (2 + (peak - peak / 2) / (peak - bg))) < 1e-9, String(out.median_fwhm_px));
+  // Half maximum is half way from the sky to the peak, so the disc edge (between r = 2 and r = 3) is crossed at 2.5.
+  assert.ok(Math.abs(out.median_fwhm_px - 2 * (2 + (peak - (bg + (peak - bg) / 2)) / (peak - bg))) < 1e-9, String(out.median_fwhm_px));
   assert.ok(Math.abs(out.color_diversity - (1 - 0.3 / 0.9)) < 1e-9, String(out.color_diversity));
   assert.equal(out.background_median, 0.05);
 });
 
 test('measure_stars resolves Gaussian stars to a fraction of a pixel, not in 0.5 px steps', async () => {
   // Mono Gaussian stars on the 16 px scan grid, 32 px apart, on a flat 0.001 pedestal. FWHM = 2 sqrt(2 ln 2) sigma.
-  const measure = async (sigma) => {
+  const measure = async (sigma, sky = 0.001, amplitude = 0.5) => {
     const centers = [];
     for (let cy = 11; cy < 250; cy += 32) for (let cx = 11; cx < 250; cx += 32) centers.push([cx, cy]);
     const img = new FakeImage(256, 256, 1, (x, y) => {
       const [cx, cy] = centers.reduce((b, c) => ((x - c[0]) ** 2 + (y - c[1]) ** 2 < (x - b[0]) ** 2 + (y - b[1]) ** 2 ? c : b));
-      return 0.001 + 0.5 * Math.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2 * sigma * sigma));
+      return sky + amplitude * Math.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2 * sigma * sigma));
     });
     const { api } = runtimeApi({ L: img });
     return parse(await byName.measure_stars.handler(api, { view_id: 'L' })).median_fwhm_px;
@@ -231,6 +232,10 @@ test('measure_stars resolves Gaussian stars to a fraction of a pixel, not in 0.5
   assert.ok(Math.abs(a - K * 1.5) < 0.15, `sigma 1.5: ${a} vs ${K * 1.5}`);
   assert.ok(Math.abs(b - K * 1.6) < 0.15, `sigma 1.6: ${b} vs ${K * 1.6}`);
   assert.ok(b - a > 0.15 && b - a < 0.35, `a 0.1 px change in sigma moves the FWHM by about 0.24 px: ${a} -> ${b}`);
+  // On a bright sky (0.15, peak 0.40) the half maximum is taken above the sky, not at half the raw peak,
+  // which read about 5.4 px for these 3.5 px stars.
+  const bright = await measure(1.5, 0.15, 0.25);
+  assert.ok(Math.abs(bright - K * 1.5) < 0.15, `sigma 1.5 on a 0.15 sky: ${bright} vs ${K * 1.5}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -349,6 +354,16 @@ test('measure_clipped_blocks measured on a synthetic image', async () => {
   assert.equal(out.total_blocks, 4);
   assert.equal(out.blocks_over, 1);
   assert.deepEqual(out.locations, [{ x: 0, y: 0, fraction: 1 }]);
+});
+
+test('measure_clipped_blocks covers the last block at the right and bottom edges', async () => {
+  // Exactly 100x100 (four 50 px blocks), the clipped block in the bottom-right corner: the scan used to
+  // stop one block short of each edge, so it saw one block and missed this one.
+  const img = new FakeImage(100, 100, 1, (x, y) => (x >= 50 && y >= 50 ? 1 : 0.1));
+  const out = parse(await byName.measure_clipped_blocks.handler(runtimeApi({ L: img }).api, { view_id: 'L', level: 0.95, block_fraction: 0.03 }));
+  assert.equal(out.total_blocks, 4);
+  assert.equal(out.blocks_over, 1);
+  assert.deepEqual(out.locations, [{ x: 50, y: 50, fraction: 1 }]);
 });
 
 // ---------------------------------------------------------------------------

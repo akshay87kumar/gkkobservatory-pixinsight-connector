@@ -5,15 +5,18 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createFakeBridge, apiFrom } from './fake-bridge.mjs';
 import { tools } from '../src/tools/channels.mjs';
+import { COPY_WINDOW_PJSR, SAFE_CLOSE_PJSR } from '../src/tools/views.mjs';
 
 const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
+// A save step with the shared helpers' definitions taken out: what it does to the view itself.
+const ownCode = (js) => js.replace(SAFE_CLOSE_PJSR, '').replace(COPY_WINDOW_PJSR, '');
 
 test('channels.mjs exports combine_channels, align_to_reference, run_per_channel_abe and lrgb_combine', () => {
   assert.deepEqual(Object.keys(byName).sort(), ['align_to_reference', 'combine_channels', 'lrgb_combine', 'run_per_channel_abe']);
 });
 
 test('combine_channels emits ChannelCombination and renames the result', async () => {
-  const { ctx, emitted } = createFakeBridge({ replies: ['CC_result=true', 'ok'] });
+  const { ctx, emitted } = createFakeBridge({ replies: ['CC_result=true', 'RGB'] });
   let call = 0;
   ctx.listImages = async () => (call++ === 0 ? [] : [{ id: 'combined_tmp', width: 100, height: 100, isColor: true }]);
   const out = await byName.combine_channels.handler(apiFrom(ctx), {
@@ -125,7 +128,28 @@ test('align_to_reference leaves the target open when the aligned file cannot be 
     assert.equal(out.isError, true);
     assert.match(out.text, /could not be opened/);
     assert.match(out.text, /G was not changed/);
-    assert.ok(!emitted.some((c) => /windowById\("G"\)[\s\S]*forceClose/.test(c)), 'the target must not have been closed');
+    // The two save steps close only the copy they saved; nothing after them closes the target.
+    for (const save of emitted.slice(0, 2)) assert.doesNotMatch(ownCode(save), /\bw\.forceClose\(\)/);
+    assert.ok(!emitted.slice(2).some((c) => /windowById\("G"\)[\s\S]*forceClose/.test(c)), 'the target must not have been closed');
+  } finally {
+    rmSync(scratchDir, { recursive: true, force: true });
+  }
+});
+
+test('align_to_reference saves copies of the views, never the views, and removes the previous aligned output first', async () => {
+  const scratchDir = await alignScratch();
+  try {
+    const { ctx, emitted } = createFakeBridge({ replies: ['ok', 'ok', 'SA_result=true', 'aligned_G', 'ok', '{}'] });
+    const api = apiFrom(ctx, { workspace: { dir: scratchDir, scratchDir } });
+    await byName.align_to_reference.handler(api, { reference_id: 'R', target_id: 'G' });
+    for (const [i, id] of [[0, 'R'], [1, 'G']]) {
+      assert.ok(emitted[i].includes(`windowById("${id}")`), `save step ${i} reads ${id}`);
+      assert.match(emitted[i], /var c = mcpCopyWindow\(w, '__align_copy'\);[\s\S]*c\.saveAs\(p, false, false, false, false\)[\s\S]*finally \{\s*c\.forceClose\(\);/);
+      assert.doesNotMatch(emitted[i], /w\.saveAs\(/, 'the view itself is never saved (it would be tied to the scratch file)');
+    }
+    const stale = emitted[2].indexOf('aligned_G.xisf');
+    assert.ok(stale > 0 && stale < emitted[2].indexOf('new StarAlignment'), 'the previous output is removed before StarAlignment runs');
+    assert.match(emitted[2], /File\.remove\(/);
   } finally {
     rmSync(scratchDir, { recursive: true, force: true });
   }
