@@ -7,6 +7,8 @@ import path from 'node:path';
 import { toPixPath } from '../platform.mjs';
 import { isInside, realPathOf } from '../workspace.mjs';
 import { clampFractions } from './compare.mjs';
+import { vid } from './pjsr-args.mjs';
+import { COPY_WINDOW_PJSR, SAFE_CLOSE_PJSR } from './views.mjs';
 
 const q = (s) => JSON.stringify(String(s));
 
@@ -59,21 +61,27 @@ function missingImageFile(file) {
 
 const openImage = {
   name: 'open_image',
-  description: 'Open an XISF/FITS image file in PixInsight. Returns the view ID assigned by PixInsight. Automatically closes any crop_mask windows that come with XISF files.',
+  description: 'Open an XISF/FITS image file in PixInsight. Returns the view ID: view_id when given (refused if a view of that id is open), otherwise the one PixInsight assigned. Automatically closes any crop_mask windows that come with XISF files.',
   inputSchema: {
     type: 'object',
-    properties: { file_path: { type: 'string', description: 'Absolute path to the image file' } },
+    properties: {
+      file_path: { type: 'string', description: 'Absolute path to the image file' },
+      view_id: { type: 'string', description: 'Optional: id to give the opened view; must not be open' },
+    },
     required: ['file_path'],
   },
   async handler(api, input) {
     const missing = missingImageFile(input.file_path);
     if (missing) return { isError: true, text: missing };
+    const wantedId = input.view_id === undefined || input.view_id === null || input.view_id === '' ? null : vid(input.view_id);
     const beforeIds = (await api.listImages()).map((i) => i.id);
     const r = await api.pjsr(`
       var __p = ${q(toPixPath(input.file_path))};
       if (!File.exists(__p)) throw new Error('File not found: ' + __p);
+      ${wantedId ? `if (!ImageWindow.windowById(${q(wantedId)}).isNull) throw new Error('view_id ' + ${q(wantedId)} + ' is already open; name a view that is not.');` : ''}
       var __wins = ImageWindow.open(__p);
       if (__wins.length === 0) throw new Error('Failed to open image: ' + __p);
+      ${wantedId ? `__wins[0].mainView.id = ${q(wantedId)};` : ''}
       __wins[0].show();
       __wins[0].mainView.id;
     `);
@@ -96,14 +104,14 @@ const openImage = {
 
 const closeImage = {
   name: 'close_image',
-  description: 'Close an image window to free memory.',
+  description: 'Close an image window to free memory, discarding unsaved changes. A window that other windows use as a mask is removed as their mask before it closes.',
   inputSchema: {
     type: 'object',
     properties: { view_id: { type: 'string', description: 'View ID to close' } },
     required: ['view_id'],
   },
   async handler(api, input) {
-    await run(api, `var w = ImageWindow.windowById(${q(input.view_id)}); if (!w.isNull) w.forceClose();`);
+    await run(api, `${SAFE_CLOSE_PJSR} var w = ImageWindow.windowById(${q(input.view_id)}); if (!w.isNull) mcpSafeClose(w);`);
     return { text: `Closed ${input.view_id}` };
   },
 };
@@ -213,7 +221,7 @@ const restoreFromClone = {
 
 const cropImage = {
   name: 'crop_image',
-  description: 'Crop pixels off the edges of an image, in place. Amounts are pixels to remove from each side. All four amounts 0 (or omitted) runs nothing and leaves the image, and its astrometric solution, unchanged. Crop runs with noGUIMessages, so PixInsight writes its warnings to the Process Console instead of opening a confirmation dialog. A crop deletes the image\'s astrometric solution (PixInsight behaviour); the result says when one was removed.',
+  description: 'Crop pixels off the edges of an image, in place, or into a new view output_id (a copy with the FITS keywords, astrometric solution and view properties, cropped; the source unchanged). Amounts are pixels to remove from each side. All four amounts 0 (or omitted) runs nothing and leaves the image, and its astrometric solution, unchanged. Crop runs with noGUIMessages, so PixInsight writes its warnings to the Process Console instead of opening a confirmation dialog. A crop deletes the image\'s astrometric solution (PixInsight behaviour); the result says when one was removed.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -222,30 +230,36 @@ const cropImage = {
       top: { type: 'number', description: 'Pixels to remove from the top edge' },
       right: { type: 'number', description: 'Pixels to remove from the right edge' },
       bottom: { type: 'number', description: 'Pixels to remove from the bottom edge' },
+      output_id: { type: 'string', description: 'Optional: id of a new view that receives the cropped copy; must not be open. Omitted = in place' },
     },
     required: ['view_id'],
   },
   async handler(api, input) {
     const m = { left: num(input.left, 0), top: num(input.top, 0), right: num(input.right, 0), bottom: num(input.bottom, 0) };
+    const outputId = input.output_id === undefined || input.output_id === null || input.output_id === '' ? null : vid(input.output_id, 'output_id');
     if (m.left === 0 && m.top === 0 && m.right === 0 && m.bottom === 0) {
       const size = await run(api, `${need(input.view_id)}
         var im = __w.mainView.image;
         return im.width + 'x' + im.height;`);
-      return { text: `Nothing cropped from ${input.view_id}: all margins are 0, so no process ran. Size: ${size}` };
+      return { text: `Nothing cropped from ${input.view_id}: all margins are 0, so no process ran${outputId ? ` and no view ${outputId} was made` : ''}. Size: ${size}` };
     }
     const raw = await run(api, `${need(input.view_id)}
+      ${COPY_WINDOW_PJSR}
       var hadSol = __w.hasAstrometricSolution;
+      var __t = __w;
+      ${outputId ? `if (!ImageWindow.windowById(${q(outputId)}).isNull) throw new Error('output_id ' + ${q(outputId)} + ' is already open; name a view that is not.');
+      __t = mcpCopyWindow(__w, ${q(outputId)});` : ''}
       var P = new Crop;
       P.mode = Crop.AbsolutePixels;
       P.leftMargin = ${-m.left}; P.topMargin = ${-m.top}; P.rightMargin = ${-m.right}; P.bottomMargin = ${-m.bottom};
       if (P.noGUIMessages !== undefined) P.noGUIMessages = true;
-      __run(P, __w.mainView);
-      var w2 = ImageWindow.windowById(${q(input.view_id)}), im = w2.mainView.image;
-      return JSON.stringify({ size: im.width + 'x' + im.height, hadSol: hadSol, hasSol: w2.hasAstrometricSolution });`);
+      ${outputId ? 'try { __run(P, __t.mainView); } catch (e) { __t.forceClose(); throw e; } __t.show();' : '__run(P, __w.mainView);'}
+      var im = __t.mainView.image;
+      return JSON.stringify({ id: __t.mainView.id, size: im.width + 'x' + im.height, hadSol: hadSol, hasSol: __t.hasAstrometricSolution });`);
     let out;
     try { out = JSON.parse(String(raw)); } catch { out = { size: String(raw ?? '') }; }
-    const sol = out.hadSol && !out.hasSol ? ' The crop removed the astrometric solution: the image has none now.' : '';
-    return { text: `Cropped ${input.view_id}. New size: ${out.size}.${sol}` };
+    const sol = out.hadSol && !out.hasSol ? ` The crop removed the astrometric solution: ${outputId ? 'the new view' : 'the image'} has none now.` : '';
+    return { text: `${outputId ? `Cropped a copy of ${input.view_id} into ${outputId}` : `Cropped ${input.view_id}`}. New size: ${out.size}.${sol}` };
   },
 };
 

@@ -2,7 +2,7 @@
 
 The PixInsight MCP connector used at [gkkobservatory](https://www.gkkobservatory.in), the Dr. Gopal Krishna Kunwar
 Observatory: urban astrophotography by Akshay Kumar from Bhagalpur, Bihar (Bortle 8). It lets an AI agent
-(Claude Code, Codex, Cursor and others) operate [PixInsight](https://pixinsight.com) through about 80 tools.
+(Claude Code, Codex, Cursor and others) operate [PixInsight](https://pixinsight.com) through nearly 100 tools.
 It is [mxcoppell/pixinsight-connector](https://github.com/mxcoppell/pixinsight-connector) plus fixes found while
 processing real data; [CHANGELOG.md](CHANGELOG.md) lists them and which are offered upstream.
 
@@ -13,7 +13,8 @@ processed end to end through the connector.
 
 | Area | Examples |
 |---|---|
-| Images | `open_image`, `list_open_images`, `crop_image`, `clone_image`, `export_image` |
+| Images | `open_image`, `list_open_images`, `crop_image`, `rotate_image`, `clone_image`, `export_image` |
+| Views and history | `get_view_info`, `view_history` (undo, redo, snapshot, purge), `close_images` |
 | Processes | `run_process` (any PixInsight process), `run_pixelmath`, `run_curves`, `describe_process` |
 | Linear prep | `run_abe`, `run_mgc`, `run_gradient_correction`, `run_background_neutralization` |
 | Colour and astrometry | `run_plate_solve`, `run_spcc`, `run_spfc`, `verify_astrometry`, `catalog_stars` |
@@ -21,10 +22,10 @@ processed end to end through the connector.
 | Stretch and tone | `auto_stretch`, `robust_median_stretch`, `set_stf`, `continuous_clamp` |
 | Channels and narrowband | `combine_channels`, `lrgb_combine`, `dynamic_narrowband_blend`, `extract_pseudo_oiii` |
 | Stars and masks | `run_sxt`, `stretch_stars`, `star_protected_blend`, `create_luminance_mask`, `apply_mask` |
-| Measurement | `get_image_stats`, `measure_stars`, `measure_sharpness`, `measure_uniformity`, `compare_images` |
+| Measurement | `get_image_stats`, `get_region_stats`, `get_grid_stats`, `measure_stars`, `measure_sharpness`, `compare_images` |
 | Preview and scripting | `save_and_show_preview`, `run_pjsr`, `job_status`, `cancel_job` |
 
-All 80-odd, with parameters: [docs/tools.md](docs/tools.md).
+All of them, with parameters: [docs/tools.md](docs/tools.md).
 
 ## What it does
 
