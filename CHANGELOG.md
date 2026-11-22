@@ -2,6 +2,19 @@
 
 Each release's full notes are on its [GitHub release](https://github.com/mxcoppell/pixinsight-connector/releases).
 
+## 2.5.3-gkkobservatory.3
+
+New tools and options for what the sessions kept writing by hand in `run_pjsr` (about 90 statistics scripts, 20 undo loops, 19 state checks, 64 batch closes in three real sessions). Each is built on PixInsight's own API and was run in PixInsight 1.9.5 on Windows 11 against synthetic images with known answers. They are not offered upstream.
+
+- **`get_region_stats`**: per-channel statistics of named rectangles on one or more views (mean, median, standard deviation, MAD and 1.4826 x MAD, minimum and maximum with positions), plus percentiles, the fractions of samples above and below given levels, the scale estimators avgDev, Sn, Qn and BWMV, and the noise estimate of PixInsight's NoiseEvaluation script. Live: on an image with Gaussian noise of sigma 0.02, the noise estimate and the MAD sigma both read 0.020; a 9000x6000 RGB image with every option took 6 s.
+- **`get_grid_stats`**: one statistic per tile of a grid (tile count or tile size, optional region), per channel. A 12x8 grid on 9000x6000 RGB took 0.5 s.
+- **`view_history`**: the history of a view by step name; undo or redo N steps, go to a position, copy a past state into a new view, or purge the history.
+- **`get_view_info`**: size, format, memory, file, modified, history position, astrometric solution, mask (enabled, inverted) and the views using it as a mask, STF and previews; FITS keywords and view properties on request.
+- **`close_images`**: closes a list of views in one call and reports what was not open and what stays open. **`close_image`** and **`close_mask`** now also take a mask off the views that use it before closing it (force-closing a mask in use has been reported to crash PixInsight; closing one this way was checked live).
+- **`rotate_image`**: FastRotation's 90/180-degree rotations and mirrors, in place or into a new view, reporting where a pixel lands. Each operation was checked live with a marked pixel.
+- **`open_image`** takes an optional `view_id`; **`crop_image`** an optional `output_id` that crops a copy and leaves the source unchanged.
+- README: the tool table lists the new tools.
+
 ## 2.5.3-gkkobservatory.2
 
 Three problems the live smoke sweep found, fixed in this build. They are not offered upstream yet.
