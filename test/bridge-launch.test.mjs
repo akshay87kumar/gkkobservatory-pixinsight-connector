@@ -6,7 +6,10 @@
 //     `PixInsight -x`, PixInsight queued the second until the first watcher exited, and the second
 //     found the single shared idle_exit_ms already consumed and stayed resident (UI locked).
 //  B  The watcher rewrites `heartbeat` by truncate-then-write; a read landing in between saw an empty
-//     file, which counted as "no watcher" and could trigger a duplicate launch.
+//     file, which counted as "no watcher" and could trigger a duplicate launch. (2026-11, Windows 11,
+//     PixInsight 1.9.5) Where the watcher moves a new beat over the old one, the file is absent or
+//     locked for a moment: a read failing with ENOENT/EBUSY launched a duplicate watcher, or failed a
+//     claimed command with "the watcher stopped while running this command".
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -227,6 +230,75 @@ test('B an empty heartbeat read while the watcher rewrites it does not launch a 
   const p = ctx.pjsr('1;');
   await answerAll(dir, 1);
   await p;
+  assert.equal(spawns.length, 0);
+});
+
+// Wraps the real fs; while `gap.left` > 0, reads of the heartbeat fail with `code`, as they do on
+// Windows while the watcher moves a new beat over the old one (seen live: about 1 read in 9 during
+// back-to-back commands, ENOENT mostly, EBUSY sometimes).
+function gapFs(heartbeat, code, left = 0) {
+  const gap = { left, reads: 0 };
+  return {
+    gap,
+    fs: {
+      ...fs,
+      readFileSync(p, ...rest) {
+        if (p === heartbeat) gap.reads++;
+        if (p === heartbeat && gap.left > 0) { gap.left--; throw Object.assign(new Error(`${code}: ${p}`), { code }); }
+        return fs.readFileSync(p, ...rest);
+      },
+    },
+  };
+}
+
+async function until(cond, what, ms = 3000) {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > ms) throw new Error(`timed out waiting for ${what}`);
+    await delay(2);
+  }
+}
+
+for (const code of ['ENOENT', 'EBUSY', 'EPERM']) {
+  test(`B a heartbeat read that fails with ${code} while the watcher replaces it does not launch a second watcher`, async (t) => {
+    const dir = await makeBridgeDir(t);
+    const clock = fakeClock();
+    fs.writeFileSync(dir.heartbeat, `idle ${clock.now()}`);
+    const spawns = [];
+    const { fs: gfs } = gapFs(dir.heartbeat, code, 3);
+    const ctx = createBridge(opts(dir, clock, { fs: gfs, spawnWatcher: () => spawns.push(1) }));
+
+    const p = ctx.pjsr('1;');
+    await answerAll(dir, 1);
+    await p;
+    assert.equal(spawns.length, 0);
+    assert.equal(fs.existsSync(dir.lock), false, 'no launch was even considered');
+  });
+}
+
+test('B a heartbeat missing for a moment while a claimed command runs does not fail the call as "watcher stopped"', async (t) => {
+  const dir = await makeBridgeDir(t);
+  const clock = fakeClock();
+  fs.writeFileSync(dir.heartbeat, `idle ${clock.now()}`);
+  const spawns = [];
+  const g = gapFs(dir.heartbeat, 'ENOENT');
+  const ctx = createBridge(opts(dir, clock, { fs: g.fs, spawnWatcher: () => spawns.push(1) }));
+
+  const p = ctx.pjsr('1;');
+  let name;
+  await until(() => (name = fs.readdirSync(dir.cmdDir).find((f) => f.endsWith('.json'))), 'the command');
+  const id = name.slice(0, -'.json'.length);
+  // What a watcher does: claim it, beat "busy", and while it moves that beat into place a read fails.
+  const running = path.join(dir.cmdDir, `${id}.running`);
+  fs.renameSync(path.join(dir.cmdDir, name), running);
+  fs.writeFileSync(dir.heartbeat, `busy run_script ${id} ${clock.now()}`);
+  const before = g.gap.reads;
+  g.gap.left = 3;
+  await until(() => g.gap.left === 0 && g.gap.reads > before + 3, 'the poll to read through the gap');
+  fs.writeFileSync(path.join(dir.resDir, `${id}.json`), JSON.stringify({ status: 'success', outputs: { consoleOutput: 'ok' } }));
+  fs.rmSync(running);
+  const r = await p;
+  assert.equal(r.result, 'ok');
   assert.equal(spawns.length, 0);
 });
 

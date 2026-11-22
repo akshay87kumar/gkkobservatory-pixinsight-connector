@@ -189,9 +189,12 @@ Before each command, `ensureWatcher()` (`src/bridge.mjs`):
    which is removed (an event `stale heartbeat` in the call log) so that PixInsight and the watcher are
    started again. These checks run at most every 5 s per dir; a probe that cannot answer never condemns a
    beat. Before 2.3.0 only "started after the beat" was checked, so a beat left by a PixInsight that was
-   killed and not yet started again blocked autostart). An empty
-   or unparseable heartbeat (a read that landed mid-rewrite) is read again up to 3 times, 25 ms apart,
-   before it counts as no watcher;
+   killed and not yet started again blocked autostart). A missing,
+   unreadable, empty or unparseable heartbeat (a read that landed while the watcher rewrote it; on
+   Windows the file is absent or locked for a moment while the watcher moves a new beat over it) is read
+   again up to 3 times, 25 ms apart, before it counts as no watcher. This holds for every liveness
+   check that acts on a "no watcher" answer (this one, the pickup relaunch and the check that fails a
+   claimed command whose watcher died); the start-up wait in step 6 looks again every 100 ms anyway;
 2. throws `BridgeAbortError` if `last-stop` says `abort requested` or `shutdown file` and was written after
    this bridge was created — an abort is never silently undone;
 3. takes this dir's launch lock (see "One launch at a time" below). If a watcher comes up while it
@@ -355,8 +358,8 @@ Known limits:
 
 Connector (`src/bridge.mjs`):
 
-- polls `results/{id}.json` every 500 ms; a command times out 20 minutes after it was written
-  (`Timeout: <tool>`);
+- polls `results/{id}.json` every 100 ms (500 ms in earlier versions, which made every call take at
+  least that long); a command times out 20 minutes after it was written (`Timeout: <tool>`);
 - if the command file is still unconsumed after 4 s and the watcher is not alive (it may have exited on
   idle just as the command was written), relaunches it;
 - every 10 s checks that PixInsight is still running; two consecutive confirmed "not running" readings are
@@ -370,11 +373,19 @@ Watcher:
 - writes `starting` as soon as it starts, before showing the console, then `idle` from its first UI event
   pump on; it starts its idle clock only after that first pump, so a slow start cannot use up the idle
   linger;
-- about every 500 ms while idle, checks its bridge dir's `commands/` (`mcpPendingCommandFiles()`),
-  refreshing the heartbeat. A missing dir (a target deleted, a volume unmounted) has no commands;
+- about every 100 ms while idle, checks its bridge dir's `commands/` (`mcpPendingCommandFiles()`),
+  refreshing the heartbeat (at most every 500 ms). A missing dir (a target deleted, a volume unmounted)
+  has no commands;
 - runs one command at a time, the first by sorted file name (ids are random UUIDs, so this is not arrival
   order): it claims it (`{id}.running`), runs it, writes the result into `results/`, then deletes the
-  claimed file;
+  claimed file. It then keeps pumping the UI for about 120 ms, so PixInsight can repaint what the
+  command changed, before it looks for the next one;
+- waits in 20 ms sleeps, each followed by a UI event pump (which keeps Pause/Abort armed) and a check
+  for Pause/Abort, the `shutdown` file and the idle linger (`waitPumping()`). The 100 ms and 120 ms are
+  wall time: a wait ends at the first check after that much time has passed, however few sleeps that
+  took, so a sleep the OS rounds up (about 31 ms for 20 ms on Windows) or a slow pump overruns it by
+  at most one sleep and one pump. Earlier versions waited a fixed number of sleeps (25 idle, 20 after
+  a command), which took about 770 ms idle on Windows;
 - exits after the linger from its launch ticket with no commands, but never while a command file is
   waiting. Launched by hand from the Script menu (no fresh ticket), it stays until Pause/Abort or the
   `shutdown` file; since its bridge dir is baked in, run the script from `<state>/watcher/…` of the target

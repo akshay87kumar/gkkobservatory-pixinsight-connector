@@ -29,7 +29,17 @@ var BRIDGE_DIR = @@BRIDGEDIR@@;
 var COMMANDS_DIR = BRIDGE_DIR + "/commands";
 var RESULTS_DIR = BRIDGE_DIR + "/results";
 var QUARANTINE_DIR = BRIDGE_DIR + "/quarantine";
-var POLL_INTERVAL_MS = 1000;
+// How the main loop waits. While idle it looks for a command every MCP_IDLE_WAIT_MS; after a command
+// it keeps pumping the UI for MCP_AFTER_COMMAND_MS, so PixInsight can repaint what the command changed
+// before the next one runs. A wait is a run of MCP_PUMP_SLICE_MS sleeps, each followed by a UI pump
+// and a stop check, and it ends on wall time, not after a fixed number of slices: a sleep or a pump
+// can take longer than asked (msleep(20) takes about 31 ms on Windows, whose default timer ticks
+// every 15.6 ms, and a pump that repaints large images has been reported to take far longer), and a
+// fixed count of them stretched the nominal 500 ms idle cycle to about 770 ms on Windows. The
+// connector polls for results at a similar rate (DEFAULT_POLL_INTERVAL_MS, src/bridge.mjs).
+var MCP_IDLE_WAIT_MS = 100;
+var MCP_AFTER_COMMAND_MS = 120;
+var MCP_PUMP_SLICE_MS = 20;
 var WATCHER_VERSION = "0.8.0";
 // Written once at start-up, before the first heartbeat: which watcher and which PixInsight this is.
 // The connector puts it in its call log (a "watcher start" event) for debugging.
@@ -532,7 +542,7 @@ function runWatcher() {
    console.noteln("===========================================");
    console.noteln("  PixInsight MCP Watcher v" + WATCHER_VERSION + " (PixInsight " + mcpPixInsightVersion() + ")");
    console.noteln("  Bridge: " + BRIDGE_DIR);
-   console.noteln("  Polling every " + POLL_INTERVAL_MS + "ms");
+   console.noteln("  Looks for commands every " + MCP_IDLE_WAIT_MS + "ms");
    console.noteln("===========================================");
 
    if (IDLE_EXIT_MS > 0) {
@@ -585,6 +595,17 @@ function runWatcher() {
       }
    }
 
+   // Sleeps and pumps in MCP_PUMP_SLICE_MS slices until `ms` of wall time have passed (at least one
+   // slice, however long it took), and returns early once a stop is due.
+   function waitPumping(ms) {
+      var end = Date.now() + ms;
+      do {
+         System.msleep(MCP_PUMP_SLICE_MS);
+         pump();
+         if (shouldShutdown()) return;
+      } while (Date.now() < end);
+   }
+
    // The idle clock starts only once start-up UI work is done. Before this, a first launch whose
    // console/UI start-up stalled for longer than IDLE_EXIT_MS wrote its first heartbeat
    // and idled out in the same loop iteration, so the bridge never saw it alive (e2e: "Watcher did
@@ -602,19 +623,10 @@ function runWatcher() {
       if (processed) {
          commandCount++;
          lastActivity = Date.now();
-         // Yield heavily after command execution so UI can catch up
-         for (var y = 0; y < 20; ++y) {
-            pump();
-            System.msleep(20);
-            if (shouldShutdown()) break;
-         }
+         // Let the UI catch up before the next command.
+         waitPumping(MCP_AFTER_COMMAND_MS);
       } else {
-         // No commands — short sleeps, ~500ms idle cycle (25 x 20ms)
-         for (var i = 0; i < 25; ++i) {
-            System.msleep(20);
-            pump();
-            if (shouldShutdown()) break;
-         }
+         waitPumping(MCP_IDLE_WAIT_MS);
       }
    }
 
