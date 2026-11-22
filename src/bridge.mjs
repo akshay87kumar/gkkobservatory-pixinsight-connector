@@ -17,7 +17,10 @@ import { scriptPathProblem } from './workspace.mjs';
 import { isPidAlive as defaultIsPidAlive, onProcessExit } from './process-probe.mjs';
 
 const DEFAULT_LINGER_MS = 8000;
-const DEFAULT_POLL_INTERVAL_MS = 500;
+// How often a send looks for its result. The watcher picks a command up within about 100 ms of it
+// being written (MCP_IDLE_WAIT_MS, pjsr/watcher.template.js) and a short snippet runs in a few ms, so
+// this interval is most of a short command's round trip: at 500 ms every call took at least 500 ms.
+const DEFAULT_POLL_INTERVAL_MS = 100;
 // The existing safety property: two consecutive failed liveness checks
 // roughly ten seconds apart before declaring a crash, because a liveness
 // check can be starved while PixInsight pegs every core. Tracked by wall
@@ -52,8 +55,11 @@ const MAX_WATCHER_RELAUNCHES = 2;
 // older one is a watcher that died while starting.
 const STARTING_GRACE_MS = 60_000;
 // The watcher rewrites `heartbeat` in place; on filesystems where its atomic replace is unavailable a
-// read can land between truncate and write and see an empty file. An unparseable beat is therefore
-// "unknown, read again shortly", and only counts as no watcher if it stays unparseable.
+// read can land between truncate and write and see an empty file. Where it does replace the file (a
+// temp file moved over it), the file is absent or locked for a moment on Windows: live, about 1 read in
+// 9 failed with ENOENT or EBUSY while the watcher ran back-to-back commands. A beat that is missing,
+// unreadable or unparseable is therefore "unknown, read again shortly", and only counts as no
+// watcher if it stays that way across the re-reads.
 const TORN_BEAT_REREADS = 3;
 const TORN_BEAT_REREAD_MS = 25;
 const HEARTBEAT_STATES = new Set(['starting', 'idle', 'busy']);
@@ -349,9 +355,13 @@ export function createBridge(opts = {}) {
 
   // Whether this dir's watcher is alive. "busy" counts as alive however old it is: a running command
   // blocks the watcher loop, so it cannot refresh the heartbeat.
-  async function watcherAlive(site) {
+  // A missing beat is read again too (`rereadMissing`): a watcher replacing it leaves it absent for a
+  // moment, and taking that for "no watcher" launched a second watcher, or failed a claimed command
+  // with "the watcher stopped while running this command". The start-up wait, which looks again
+  // every WATCHER_START_POLL_MS anyway, passes false.
+  async function watcherAlive(site, { rereadMissing = true } = {}) {
     let beat = readBeat(site);
-    for (let i = 0; beat?.unknown && i < TORN_BEAT_REREADS; i++) {
+    for (let i = 0; (beat?.unknown || (rereadMissing && beat === null)) && i < TORN_BEAT_REREADS; i++) {
       await sleep(TORN_BEAT_REREAD_MS);
       beat = readBeat(site);
     }
@@ -578,7 +588,7 @@ export function createBridge(opts = {}) {
 
     async function awaitWatcherStart() {
       for (;;) {
-        if (await watcherAlive(site)) return;
+        if (await watcherAlive(site, { rereadMissing: false })) return;
         if (spawnError) {
           trace({ kind: 'event', event: 'watcher spawn failed', piBin, code: spawnError.code ?? null, message: spawnError.message });
           throw new Error(`The watcher could not be launched. ${spawnFailureMessage(piBin, spawnError)}`);
