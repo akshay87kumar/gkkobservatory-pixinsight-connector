@@ -23,8 +23,8 @@ telescope. The test suite needs no PixInsight, so every gate can be run anywhere
 You need Node 22 or newer and `git`. PixInsight is **not** needed: the suite fakes the bridge.
 
 ```
-git clone https://github.com/mxcoppell/pixinsight-connector.git
-cd pixinsight-connector
+git clone https://github.com/akshay87kumar/gkkobservatory-pixinsight-connector.git
+cd gkkobservatory-pixinsight-connector
 npm ci
 npm test
 ```

@@ -9,7 +9,7 @@ in both (`test/agent-instructions.test.mjs`).
 A generic MCP connector for PixInsight: `src/cli.mjs` starts a stdio MCP server (`src/server.mjs`) whose
 tools operate PixInsight through a file-based bridge (`src/bridge.mjs`, protocol in
 `docs/bridge-protocol.md`) and a PJSR watcher (`pjsr/watcher.template.js`) that `src/runtime.mjs`
-materializes and launches on the first tool call. Installed with `npm install -g pixinsight-connector` (or run with `npx -y pixinsight-connector`).
+materializes and launches on the first tool call. This is the gkkobservatory build, installed with `npm install -g github:akshay87kumar/gkkobservatory-pixinsight-connector` (upstream's release is `npm install -g pixinsight-connector`).
 It contains no processing workflow; see `README.md`.
 
 ## The separation rule
@@ -46,6 +46,12 @@ A pack tool may shadow a core tool, except the reserved `resume_bridge`, `run_pj
 - Every OS-dependent decision is injectable (`platform`, `homeDir`, `env`, `existsSync`, `spawn`) and unit
   tested from any OS; module paths go through `fileURLToPath` / `pathToFileURL`.
 - PJSR in `pjsr/` and in generated snippets stays ES5-style; V8 constants are `Process.CONSTANT`.
+- PJSR that visits every pixel moves whole rows (`getSamples`/`setSamples` into Float64Array buffers, see
+  `src/tools/pixel-rows.mjs`) inside a function and calls `mcpRowDone()` per row, which lets Pause/Abort act.
+  One `sample()` call per pixel, or a loop at a snippet's top level (whose variables are looked up by name on
+  every access), was 6-22x slower.
+- An input that names a view the tool will create is called `output_id`. The server refuses a call whose
+  `view_id` (or another argument it treats as a view, listed in `src/server.mjs`) is not an open view.
 - No model name in `src/`, `test/` or `doctor` output. Nothing may assume a particular harness.
 - Every tool call is logged by the one dispatch in `src/server.mjs` through `src/call-log.mjs`, so a new
   tool needs nothing to be logged. A logging failure never fails or changes a call.

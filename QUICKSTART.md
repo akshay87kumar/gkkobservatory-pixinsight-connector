@@ -25,7 +25,9 @@ In PixInsight, point Gaia and MARS at the downloaded files in each process's pre
 Open the agent in any folder and paste:
 
 ```text
-Install the PixInsight connector and its companion skills for this harness, following
+Install the PixInsight connector with
+npm install -g github:akshay87kumar/gkkobservatory-pixinsight-connector
+and its companion skills for this harness, following (without installing the connector a second time)
 https://github.com/mxcoppell/pixinsight-connector-skills#install
 Register the connector as the MCP server "pixinsight", once only.
 Then run "pixinsight-connector doctor" and tell me what it reports.
@@ -110,6 +112,6 @@ The basic skill is a starting point. Your own look, order and values belong in *
 ## 9. Report what breaks
 
 A tool that fails, refuses, or does something odd is worth an issue:
-[open one here](https://github.com/mxcoppell/pixinsight-connector/issues/new/choose). Include the
+[open one here](https://github.com/akshay87kumar/gkkobservatory-pixinsight-connector/issues/new/choose). Include the
 `pixinsight-connector doctor` output, the model and harness, and the call log from `agentic/logs/`. Runs with
 models not yet tested ([docs/setup.md](docs/setup.md#models)) are welcome too, working or not.

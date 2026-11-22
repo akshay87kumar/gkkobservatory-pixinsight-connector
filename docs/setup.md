@@ -5,8 +5,8 @@ the environment variables, where PixInsight is looked for, and which models work
 
 ## Registering with a harness
 
-The server command is `pixinsight-connector` (after `npm install -g pixinsight-connector`). It is also listed in the
-MCP registry as `io.github.mxcoppell/pixinsight-connector`, for harnesses that install servers from it.
+The server command is `pixinsight-connector` (after `npm install -g github:akshay87kumar/gkkobservatory-pixinsight-connector`, this
+gkkobservatory build). The MCP registry listing `io.github.mxcoppell/pixinsight-connector` installs upstream's release.
 Register it under the name `pixinsight`. A harness that cannot find the command takes its full path: run
 `npm prefix -g` and append `bin/pixinsight-connector`.
 
@@ -84,7 +84,7 @@ What the work needs, whatever the model:
 |---|---|
 | **Vision (required)** | `save_preview` returns a JPEG path and the agent has to look at it; without vision it works blind |
 | Reliable tool calling | tens to a hundred sequential calls, some taking minutes, all state inside PixInsight |
-| Long context | skill text, about 80 tool schemas and a transcript of numeric results |
+| Long context | skill text, about 95 tool schemas and a transcript of numeric results |
 
 **1. Start with a Sonnet-class model.** It is reliable enough over a long run that a failure points at the
 workflow, not the model. All take image input. Prices are per million tokens, input / output, as of 2026-09-24:
