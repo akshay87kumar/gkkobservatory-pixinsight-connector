@@ -2,6 +2,21 @@
 
 Each release's full notes are on its [GitHub release](https://github.com/mxcoppell/pixinsight-connector/releases).
 
+## 2.5.3-gkkobservatory.4
+
+Fixes from a review of every existing tool, kept to the problems that can damage work or give a wrong number; each was checked in PixInsight 1.9.5 on Windows 11 against synthetic images, the old code next to the new where it applies. They are not offered upstream.
+
+- **`open_image`'s new name is `output_id`.** Given as `view_id` in .3, it was refused by the server's check that a named view is open, so it could not be used through MCP.
+- **`align_to_reference` saves copies.** It saved the reference and target views themselves to scratch files, which tied them to those files and marked them unmodified (PixInsight then did not warn about their unsaved changes). It also removes the previous run's aligned file first, so a failed match cannot pick it up.
+- **Names are never confused.** `rename_view` refuses a name that is open (PixInsight would have given a suffixed one while the result reported the name asked for). `clone_image` refuses to clone onto its own source and says when it replaces a view of the clone's name; `pixelmath_new_image` does the same for its output and refuses `size_from` or a view its expressions read (re-running with the same `output_id` used to leave the result under a suffixed name and change the old view). `combine_channels` no longer renames some other colour view when no new image appears.
+- **`multi_scale_enhance` always takes its mask off**, also after Pause/Abort or a failed step.
+- **Statistics name their region and channels.** The statistics every tool uses (and `get_image_stats`) and `measure_stars` no longer depend on a selection an earlier script left on the image. Live, a leftover 10x10 selection made the old code report a median of 0.118 instead of 0.183.
+- **`save_preview` copies only the crop** and closes its temporary window whatever happens; the JPEGs are identical. A crop of a 6000x4000 image: 976 ms -> 432 ms.
+- **`run_plate_solve` refuses when no scale is known** (no `pixel_scale`, no focal length and pixel size given or in the image, no solution), instead of solving against ImageSolver's built-in 1000 mm and 7.4 um.
+- **`measure_stars`' FWHM is taken half way between the sky and the peak**, not at half the peak, and reports every measured value. Live, stars of 3.53 px FWHM on a 0.15 sky: old 5.61 px, new 3.60 px.
+- **Block scans reach the right and bottom edges** (`measure_clipped_blocks`, `measure_ringing`, `measure_core_clipping`, `measure_subject_detail`, `measure_highlight_texture`). Live, a 100x100 image: the old scan saw 1 of its 4 blocks.
+- `restore_from_clone`'s description now says it restores pixels only.
+
 ## 2.5.3-gkkobservatory.3
 
 New tools and options for what the sessions kept writing by hand in `run_pjsr` (about 90 statistics scripts, 20 undo loops, 19 state checks, 64 batch closes in three real sessions). Each is built on PixInsight's own API and was run in PixInsight 1.9.5 on Windows 11 against synthetic images with known answers. They are not offered upstream.
