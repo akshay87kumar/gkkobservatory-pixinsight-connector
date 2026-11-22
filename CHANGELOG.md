@@ -2,6 +2,27 @@
 
 Each release's full notes are on its [GitHub release](https://github.com/mxcoppell/pixinsight-connector/releases).
 
+## 2.5.3-gkkobservatory.2
+
+Three problems the live smoke sweep found, fixed in this build. They are not offered upstream yet.
+
+- **The slow tools are fast, and PixInsight stays responsive while they run.** `extract_pseudo_oiii`, `dynamic_narrowband_blend` (its mask), `create_zone_masks`, `create_adaptive_zone_masks`, `continuous_clamp` and `shell_detail_enhance` (its measurement, and its `auto_zone` masks) read and wrote one pixel per call to PixInsight's scripting API. They now move a whole row per call (`src/tools/pixel-rows.mjs`) and run each loop inside a function, where PixInsight's script engine runs it several times faster than at the top of a script. The arithmetic is the same: in PixInsight 1.9.5, every output pixel matched the old code's on colour and mono images. Times on a 9000x6000 RGB image (Windows 11):
+
+  | Tool | Before | After |
+  |---|---|---|
+  | `extract_pseudo_oiii` | 35.7 s | 2.8 s |
+  | `create_zone_masks` | 54.5 s | 3.1 s |
+  | `create_adaptive_zone_masks` | 108.0 s | 8.1 s |
+  | `dynamic_narrowband_blend` | 36.2 s | 4.5 s |
+  | `continuous_clamp` (hard) | 59.9 s | 2.7 s |
+  | `shell_detail_enhance` with `auto_zone` | 128.8 s | 19.7 s |
+
+  - They yield to PixInsight every 64 rows, so it repaints, Pause/Abort and `cancel_job` can stop them, and the busy heartbeat is refreshed (the server's "no sign of progress" warning was a false alarm).
+  - A stopped or failed run closes the windows it had created.
+- **`export_image` XISF files keep the view's name.** They stored `export_tmp`, the name of the temporary copy the tool saves; they now store the exported view's id. The view is renamed for the moment the copy exists and gets its name back whatever happens.
+- **The colour-only tools refuse a mono view.** `ha_inject_red`, `ha_inject_luminance`, `star_protected_blend` and `restore_star_color` changed a mono view as if it were R and reported success. They now refuse it before changing anything. `ha_inject_red` and `ha_inject_luminance` also fail when PixelMath reports that it did not run.
+- **README:** rewritten for the gkkobservatory build.
+
 ## 2.5.3-gkkobservatory.1
 
 **The first gkkobservatory build:** upstream 2.5.3 plus the fixes below, merged here before upstream has released them. Each is also offered to [mxcoppell/pixinsight-connector](https://github.com/mxcoppell/pixinsight-connector). Install with `npm install -g github:akshay87kumar/gkkobservatory-pixinsight-connector`.
