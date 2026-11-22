@@ -114,9 +114,13 @@ test('save_preview bakes the STF of another view, crops and downsamples, in that
   assert.match(js, /ImageWindow\.windowById\("F_hue"\)/);
   assert.match(js, /var crop = \[100,50,500,450\];/);
   assert.match(js, /var scale = 1 \/ 2;/);
-  assert.ok(js.indexOf('new Crop') < js.indexOf('new HistogramTransformation'), 'crop, then stretch');
+  // The crop is a copy of the region only (no full-size copy), then the stretch, then the resample.
+  assert.match(js, /new ImageWindow\(w, h, img\.numberOfChannels/);
+  const crop = js.indexOf('assign(img, new Rect(crop[0], crop[1], crop[2], crop[3]))');
+  assert.ok(crop > 0 && crop < js.indexOf('new HistogramTransformation'), 'crop, then stretch');
   assert.ok(js.indexOf('new HistogramTransformation') < js.indexOf('new Resample'), 'stretch, then resample');
-  assert.match(js, /C\.noGUIMessages = true/);
+  assert.doesNotMatch(js, /new Crop/);
+  assert.match(js, /} finally {\s*tmp\.forceClose\(\);/, 'the temporary window is closed whatever happens');
   assert.match(js, /if \(!saved\) throw new Error/);
   assert.match(out.text, /Preview saved: cmp \(crop \[100,50,500,450\], downsample 2, STF of F_hue\)/);
 });

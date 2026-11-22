@@ -6,7 +6,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
-import { bool } from './pjsr-args.mjs';
+import { bool, vid } from './pjsr-args.mjs';
+import { SAFE_CLOSE_PJSR } from './views.mjs';
 import { PJSR_NEED_PARAMS, needParamsCall } from '../define.mjs';
 
 const q = (s) => JSON.stringify(String(s));
@@ -286,7 +287,7 @@ const runPixelmath = {
 
 const pixelmathNewImage = {
   name: 'pixelmath_new_image',
-  description: 'Run PixelMath to create a NEW image from expressions that reference other open views by id. Color "rgb" takes red/green/blue expressions; color "gray" takes a single expression. The new image is truncated to [0,1]; the reply gives, per channel, the fraction of samples that were below 0 or above 1 before truncation. When size_from has an astrometric solution it is copied onto the new image (same geometry), unless copy_astrometric_solution is false. View ids used inside expressions must be simple identifiers (rename_view renames a view). No pow() — use exp(exponent*ln(base)) or the ^ operator.',
+  description: 'Run PixelMath to create a NEW image from expressions that reference other open views by id. Color "rgb" takes red/green/blue expressions; color "gray" takes a single expression. The new image is truncated to [0,1]; the reply gives, per channel, the fraction of samples that were below 0 or above 1 before truncation. When size_from has an astrometric solution it is copied onto the new image (same geometry), unless copy_astrometric_solution is false. A view already named output_id is closed and replaced (the result says so); output_id may not be size_from or a view the expressions read. View ids used inside expressions must be simple identifiers (rename_view renames a view). No pow() — use exp(exponent*ln(base)) or the ^ operator.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -307,8 +308,19 @@ const pixelmathNewImage = {
     if (rgb && !(input.red && input.green && input.blue)) return { isError: true, text: 'color "rgb" needs red, green and blue expressions.' };
     if (!rgb && !input.expression) return { isError: true, text: 'color "gray" needs expression.' };
     const copySol = input.copy_astrometric_solution === undefined ? true : bool(input.copy_astrometric_solution, true, 'copy_astrometric_solution');
+    const outId = vid(input.output_id, 'output_id');
+    // The view of that name is closed before the new one is made, so it must not be one the run reads.
+    const reads = [input.red, input.green, input.blue, input.expression, input.symbols].filter(Boolean).join(' ');
+    if (outId === input.size_from || new RegExp(`(^|[^A-Za-z0-9_])${outId}([^A-Za-z0-9_]|$)`).test(reads)) {
+      return { isError: true, text: `output_id ${outId} is ${outId === input.size_from ? 'size_from' : 'a view the expressions read'}; name a new view. Nothing was changed.` };
+    }
     const r = await api.pjsr(`
+      ${SAFE_CLOSE_PJSR}
       var __w = ImageWindow.windowById(${q(input.size_from)}); if (__w.isNull) throw new Error('View not found: ' + ${q(input.size_from)});
+      // A view already named output_id is replaced: PixelMath would otherwise name the new image with a
+      // suffix, and the old view of that name would be taken for the result.
+      var __old = ImageWindow.windowById(${q(outId)}), __replaced = !__old.isNull;
+      if (__replaced) mcpSafeClose(__old);
       var img = __w.mainView.image;
       var P = new PixelMath;
       ${rgb
@@ -320,18 +332,19 @@ const pixelmathNewImage = {
       P.newImageWidth = img.width; P.newImageHeight = img.height;
       P.newImageColorSpace = ${rgb ? 'PixelMath.RGB' : 'PixelMath.Gray'};
       P.newImageSampleFormat = PixelMath.f32;
-      P.executeGlobal();
-      var __nw = ImageWindow.windowById(${q(input.output_id)});
+      if (!P.executeGlobal()) throw new Error('PixelMath did not run; check the expressions and that every view id exists.');
+      var __nw = ImageWindow.windowById(${q(outId)});
       if (__nw.isNull) throw new Error('PixelMath produced no image; check the expressions and that every view id exists.');
       var __sol = false;
       if (${copySol ? 'true' : 'false'} && __w.hasAstrometricSolution && __nw.mainView.image.width === img.width && __nw.mainView.image.height === img.height) { __nw.copyAstrometricSolution(__w); __sol = __nw.hasAstrometricSolution; }
       ${CLIP_REPORT_PJSR}
-      JSON.stringify({ clip: __clipReport(__nw.mainView), solution: __sol });
+      JSON.stringify({ clip: __clipReport(__nw.mainView), solution: __sol, replaced: __replaced });
     `);
     if (r.status === 'error') throw new Error(r.error?.message || JSON.stringify(r.error));
     const info = parseClip(r) || {};
     const sol = info.solution ? ` Astrometric solution copied from ${input.size_from}.` : '';
-    return { text: `Created ${input.output_id} (${input.color}).${sol}${clipText(info.clip)}` };
+    const replaced = info.replaced ? ` The view previously named ${outId} was closed and replaced.` : '';
+    return { text: `Created ${outId} (${input.color}).${replaced}${sol}${clipText(info.clip)}` };
   },
 };
 

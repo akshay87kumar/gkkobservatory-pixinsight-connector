@@ -32,7 +32,7 @@ shows what loaded.
 | `list_open_images` | Images | List all currently open images in PixInsight with their dimensions and color status |
 | `rename_view` | Images | Rename an image view to a different view ID |
 | `clone_image` | Images | Clone an image to a backup view, which can be restored from later with restore_from_clone |
-| `restore_from_clone` | Images | Restore an image from a backup clone, replacing all changes since the clone was made |
+| `restore_from_clone` | Images | Restore an image's pixels from a backup clone, replacing the pixel changes made since the clone was made |
 | `crop_image` | Images | Crop pixels off the edges of an image, in place, or into a new view output_id (a copy with the FITS keywords, astrometric solution and view properties, cropped; the source unchanged) |
 | `get_image_dimensions` | Images | Get dimensions, channel count, and color status for one or more views |
 | `get_image_stats` | Images | Get image statistics: median, MAD, min, max, per-channel medians, and per channel the fraction of samples at exactly 0 and at exactly 1 (clampFractions) |

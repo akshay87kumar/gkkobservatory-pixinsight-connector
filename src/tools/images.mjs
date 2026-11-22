@@ -61,24 +61,24 @@ function missingImageFile(file) {
 
 const openImage = {
   name: 'open_image',
-  description: 'Open an XISF/FITS image file in PixInsight. Returns the view ID: view_id when given (refused if a view of that id is open), otherwise the one PixInsight assigned. Automatically closes any crop_mask windows that come with XISF files.',
+  description: 'Open an XISF/FITS image file in PixInsight. Returns the view ID: output_id when given (refused if a view of that id is open), otherwise the one PixInsight assigned. Automatically closes any crop_mask windows that come with XISF files.',
   inputSchema: {
     type: 'object',
     properties: {
       file_path: { type: 'string', description: 'Absolute path to the image file' },
-      view_id: { type: 'string', description: 'Optional: id to give the opened view; must not be open' },
+      output_id: { type: 'string', description: 'Optional: id to give the opened view; must not be open' },
     },
     required: ['file_path'],
   },
   async handler(api, input) {
     const missing = missingImageFile(input.file_path);
     if (missing) return { isError: true, text: missing };
-    const wantedId = input.view_id === undefined || input.view_id === null || input.view_id === '' ? null : vid(input.view_id);
+    const wantedId = input.output_id === undefined || input.output_id === null || input.output_id === '' ? null : vid(input.output_id, 'output_id');
     const beforeIds = (await api.listImages()).map((i) => i.id);
     const r = await api.pjsr(`
       var __p = ${q(toPixPath(input.file_path))};
       if (!File.exists(__p)) throw new Error('File not found: ' + __p);
-      ${wantedId ? `if (!ImageWindow.windowById(${q(wantedId)}).isNull) throw new Error('view_id ' + ${q(wantedId)} + ' is already open; name a view that is not.');` : ''}
+      ${wantedId ? `if (!ImageWindow.windowById(${q(wantedId)}).isNull) throw new Error('output_id ' + ${q(wantedId)} + ' is already open; name a view that is not.');` : ''}
       var __wins = ImageWindow.open(__p);
       if (__wins.length === 0) throw new Error('Failed to open image: ' + __p);
       ${wantedId ? `__wins[0].mainView.id = ${q(wantedId)};` : ''}
@@ -138,17 +138,24 @@ const renameView = {
     required: ['old_id', 'new_id'],
   },
   async handler(api, input) {
-    const r = await api.pjsr(
-      `var w = ImageWindow.windowById(${q(input.old_id)}); if (!w.isNull) w.mainView.id = ${q(input.new_id)}; else throw new Error('View not found: ' + ${q(input.old_id)});`
-    );
+    const newId = vid(input.new_id, 'new_id');
+    // PixInsight gives a view a suffixed id when the one asked for is taken, so a taken id is refused
+    // (renaming never closes another view) and the result reports the id the view has afterwards.
+    const r = await api.pjsr(`
+      var w = ImageWindow.windowById(${q(input.old_id)});
+      if (w.isNull) throw new Error('View not found: ' + ${q(input.old_id)});
+      if (${q(newId)} !== ${q(input.old_id)} && !ImageWindow.windowById(${q(newId)}).isNull) throw new Error('new_id ' + ${q(newId)} + ' is already open; close it or name another view. ' + ${q(input.old_id)} + ' was not renamed.');
+      w.mainView.id = ${q(newId)};
+      w.mainView.id;`);
     if (r.status === 'error') throw new Error(r.error?.message || JSON.stringify(r.error));
-    return { text: `Renamed ${input.old_id} → ${input.new_id}` };
+    const got = String(r.result ?? newId).trim() || newId;
+    return { text: `Renamed ${input.old_id} → ${got}` };
   },
 };
 
 const cloneImage = {
   name: 'clone_image',
-  description: 'Clone an image to a backup view, which can be restored from later with restore_from_clone. The clone keeps the image\'s FITS keywords, astrometric solution and view properties.',
+  description: 'Clone an image to a backup view, which can be restored from later with restore_from_clone. The clone keeps the image\'s FITS keywords, astrometric solution and view properties. A view already named clone_id is closed and replaced (the result says so); clone_id may not be the source itself.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -158,6 +165,8 @@ const cloneImage = {
     required: ['source_id', 'clone_id'],
   },
   async handler(api, input) {
+    const cloneId = vid(input.clone_id, 'clone_id');
+    if (cloneId === input.source_id) throw new Error(`clone_image: clone_id is the source view ${input.source_id}; name another view. Nothing was changed.`);
     const dimR = await api.pjsr(`
       var srcW = ImageWindow.windowById(${q(input.source_id)});
       if (srcW.isNull) throw new Error('Clone source not found: ' + ${q(input.source_id)});
@@ -167,8 +176,9 @@ const cloneImage = {
     if (dimR.status === 'error') throw new Error('clone_image: ' + dimR.error.message);
     const d = JSON.parse(dimR.outputs?.consoleOutput?.trim() || '{}');
     const r = await api.pjsr(`
-      var old = ImageWindow.windowById(${q(input.clone_id)});
-      if (!old.isNull) old.forceClose();
+      ${SAFE_CLOSE_PJSR}
+      var old = ImageWindow.windowById(${q(cloneId)}), __replaced = !old.isNull;
+      if (__replaced) mcpSafeClose(old);
       var srcW = ImageWindow.windowById(${q(input.source_id)});
       var clone = new ImageWindow(${d.w || 0}, ${d.h || 0}, ${d.ch || 3}, 32, true, ${d.color !== false}, ${q(input.clone_id)});
       clone.mainView.beginProcess();
@@ -185,16 +195,17 @@ const cloneImage = {
         } catch (e) {}
       }
       clone.hide();
-      'OK';
+      __replaced ? 'replaced' : 'OK';
     `);
     if (r.status === 'error') throw new Error('clone_image: ' + r.error.message);
-    return { text: `Cloned ${input.source_id} → ${input.clone_id}` };
+    const replaced = String(r.result ?? r.outputs?.consoleOutput ?? '').trim() === 'replaced';
+    return { text: `Cloned ${input.source_id} → ${input.clone_id}${replaced ? ` (the view previously named ${input.clone_id} was closed and replaced)` : ''}` };
   },
 };
 
 const restoreFromClone = {
   name: 'restore_from_clone',
-  description: 'Restore an image from a backup clone, replacing all changes since the clone was made.',
+  description: 'Restore an image\'s pixels from a backup clone, replacing the pixel changes made since the clone was made. Its FITS keywords, astrometric solution and view properties stay as they are now.',
   inputSchema: {
     type: 'object',
     properties: {

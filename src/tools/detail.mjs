@@ -88,84 +88,90 @@ async function multiScaleEnhance(api, viewId, input) {
     var maskId = '__mse_mask';
     var maskWin = ImageWindow.windowById(maskId);
     if (!maskWin.isNull) maskWin.forceClose();
-    if (img.isColor) {
-      var CE = new ChannelExtraction;
-      CE.colorSpace = ChannelExtraction.CIELab;
-      CE.channels = [[true, maskId], [false, ''], [false, '']];
-      CE.executeOn(w.mainView);
-    } else {
-      // Mono: the mask starts as a grayscale copy of the image itself.
-      var mw = new ImageWindow(img.width, img.height, 1, 32, true, false, maskId);
-      mw.mainView.beginProcess();
-      mw.mainView.image.assign(img);
-      mw.mainView.endProcess();
-      mw.show();
-    }
-    processEvents();
-    maskWin = ImageWindow.windowById(maskId);
-    if (maskWin.isNull) throw new Error('Failed to create luminance mask');
-
-    var PM = new PixelMath;
-    PM.expression = 'max((' + maskId + ' - ${maskClipLow}) / (1 - ${maskClipLow}), 0)';
-    PM.useSingleExpression = true;
-    PM.createNewImage = false;
-    PM.executeOn(maskWin.mainView);
-    processEvents();
-
-    if (${maskGamma} !== 1.0) {
-      var PM2 = new PixelMath;
-      PM2.expression = 'exp(${invGamma} * ln(max(' + maskId + ', 0.0001)))';
-      PM2.useSingleExpression = true;
-      PM2.createNewImage = false;
-      PM2.executeOn(maskWin.mainView);
+    // Whatever happens once the mask exists (a failed step, Pause/Abort), it is taken off the view
+    // and closed, so no later tool runs through a hidden mask.
+    try {
+      if (img.isColor) {
+        var CE = new ChannelExtraction;
+        CE.colorSpace = ChannelExtraction.CIELab;
+        CE.channels = [[true, maskId], [false, ''], [false, '']];
+        CE.executeOn(w.mainView);
+      } else {
+        // Mono: the mask starts as a grayscale copy of the image itself.
+        var mw = new ImageWindow(img.width, img.height, 1, 32, true, false, maskId);
+        mw.mainView.beginProcess();
+        mw.mainView.image.assign(img);
+        mw.mainView.endProcess();
+        mw.show();
+      }
       processEvents();
-    }
+      maskWin = ImageWindow.windowById(maskId);
+      if (maskWin.isNull) throw new Error('Failed to create luminance mask');
 
-    if (${maskBlur} > 0) {
-      var blur = new Convolution;
-      blur.mode = Convolution.Parametric;
-      blur.sigma = ${maskBlur};
-      blur.shape = 2;
-      blur.executeOn(maskWin.mainView);
+      var PM = new PixelMath;
+      PM.expression = 'max((' + maskId + ' - ${maskClipLow}) / (1 - ${maskClipLow}), 0)';
+      PM.useSingleExpression = true;
+      PM.createNewImage = false;
+      PM.executeOn(maskWin.mainView);
       processEvents();
+
+      if (${maskGamma} !== 1.0) {
+        var PM2 = new PixelMath;
+        PM2.expression = 'exp(${invGamma} * ln(max(' + maskId + ', 0.0001)))';
+        PM2.useSingleExpression = true;
+        PM2.createNewImage = false;
+        PM2.executeOn(maskWin.mainView);
+        processEvents();
+      }
+
+      if (${maskBlur} > 0) {
+        var blur = new Convolution;
+        blur.mode = Convolution.Parametric;
+        blur.sigma = ${maskBlur};
+        blur.shape = 2;
+        blur.executeOn(maskWin.mainView);
+        processEvents();
+      }
+
+      w.mask = maskWin;
+      w.maskVisible = false;
+      w.maskInverted = false;
+
+      // LHE: large, mid, then fine scale
+      var LHE1 = new LocalHistogramEqualization;
+      LHE1.radius = ${lheLargeR};
+      LHE1.slopeLimit = ${slopeLimit};
+      LHE1.amount = ${lheLargeA};
+      LHE1.executeOn(w.mainView);
+      processEvents();
+
+      var LHE2 = new LocalHistogramEqualization;
+      LHE2.radius = ${lheMidR};
+      LHE2.slopeLimit = ${slopeLimit};
+      LHE2.amount = ${lheMidA};
+      LHE2.executeOn(w.mainView);
+      processEvents();
+
+      var LHE3 = new LocalHistogramEqualization;
+      LHE3.radius = ${lheFineR};
+      LHE3.slopeLimit = ${fineSlopeLimit};
+      LHE3.amount = ${lheFineA};
+      LHE3.executeOn(w.mainView);
+      processEvents();
+
+      ${doHDRMT ? `
+      var HDRMT = new HDRMultiscaleTransform;
+      HDRMT.numberOfLayers = ${hdrmtLayers};
+      ${hdrmtAssign.join('\n    ')}
+      HDRMT.executeOn(w.mainView);
+      processEvents();
+      ` : ''}
+
+    } finally {
+      if (!w.mask.isNull && w.mask.mainView.id === maskId) w.removeMask();
+      var __mseMask = ImageWindow.windowById(maskId);
+      if (!__mseMask.isNull) __mseMask.forceClose();
     }
-
-    w.mask = maskWin;
-    w.maskVisible = false;
-    w.maskInverted = false;
-
-    // LHE: large, mid, then fine scale
-    var LHE1 = new LocalHistogramEqualization;
-    LHE1.radius = ${lheLargeR};
-    LHE1.slopeLimit = ${slopeLimit};
-    LHE1.amount = ${lheLargeA};
-    LHE1.executeOn(w.mainView);
-    processEvents();
-
-    var LHE2 = new LocalHistogramEqualization;
-    LHE2.radius = ${lheMidR};
-    LHE2.slopeLimit = ${slopeLimit};
-    LHE2.amount = ${lheMidA};
-    LHE2.executeOn(w.mainView);
-    processEvents();
-
-    var LHE3 = new LocalHistogramEqualization;
-    LHE3.radius = ${lheFineR};
-    LHE3.slopeLimit = ${fineSlopeLimit};
-    LHE3.amount = ${lheFineA};
-    LHE3.executeOn(w.mainView);
-    processEvents();
-
-    ${doHDRMT ? `
-    var HDRMT = new HDRMultiscaleTransform;
-    HDRMT.numberOfLayers = ${hdrmtLayers};
-    ${hdrmtAssign.join('\n    ')}
-    HDRMT.executeOn(w.mainView);
-    processEvents();
-    ` : ''}
-
-    w.removeMask();
-    maskWin.forceClose();
     processEvents();
 
     var after = measureDetail();

@@ -59,7 +59,7 @@ const EXPECTED_WRITE_SITES = {
   'catalog.mjs': ['mkdirSync(', 'writeFileSync('], // catalog_stars: scratchDir/catalog
   'wbpp.mjs': ['outputDirectory=', 'mkdirSync(', 'mkdirSync(', 'writeFileSync(', 'writeFileSync(', 'writeFileSync(', 'writeFileSync('], // run_wbpp: scratchDir/wbpp run records; WBPP writes resolveExportPath's folder
   'astrometry.mjs': ['File.createDirectory('], // run_plate_solve: scratchDir/tmp_platesolve (ImageSolver's star lists)
-  'channels.mjs': ['mkdirSync(', 'File.remove(', 'saveAs(', 'outputDirectory ='], // align_to_reference: scratchDir/tmp_align
+  'channels.mjs': ['mkdirSync(', 'File.remove(', 'saveAs(', 'File.remove(', 'outputDirectory ='], // align_to_reference: scratchDir/tmp_align (copies of the views, the previous aligned output)
   'images.mjs': ['mkdirSync(', 'File.remove(', 'saveAs(', 'mkdirSync('], // export_image: resolveExportPath's file; ensure_dir: resolveExportPath's folder
   'preview.mjs': ['mkdirSync(', 'rmSync(', 'File.remove(', 'saveAs('], // save_preview: scratchDir/previews
 };
