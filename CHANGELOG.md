@@ -2,7 +2,7 @@
 
 Each release's full notes are on its [GitHub release](https://github.com/mxcoppell/pixinsight-connector/releases).
 
-## Unreleased
+## 2.5.3-gkkobservatory.5
 
 Changes for what the call logs of 26 real sessions (2,580 tool calls, six targets, 25 October to 24 November 2026) showed agents working around. Each was run in PixInsight 1.9.6 on Windows 11 through real MCP tool calls to this build's server (63 checks, among them the files read back: WebP chunk types, sizes, colour, the solution of a scaled plate-solved XISF), and the live test suite passes. They are not offered upstream.
 
