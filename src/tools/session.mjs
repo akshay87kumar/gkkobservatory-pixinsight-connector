@@ -30,19 +30,15 @@ const pixinsightInfo = {
     }
     const { piBin, imageSolverPath, filterDbPath, whiteRefPath, settingsPath, verified } = api.platform;
     return {
-      text: JSON.stringify(
-        {
-          piBin,
-          imageSolverPath,
-          filterDbPath,
-          whiteRefPath,
-          settingsPath,
-          verified,
-          connectorVersion: api.connectorVersion,
-        },
-        null,
-        2
-      ),
+      text: JSON.stringify({
+        piBin,
+        imageSolverPath,
+        filterDbPath,
+        whiteRefPath,
+        settingsPath,
+        verified,
+        connectorVersion: api.connectorVersion,
+      }),
     };
   },
 };

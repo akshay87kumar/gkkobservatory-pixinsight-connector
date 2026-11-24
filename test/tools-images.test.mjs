@@ -224,15 +224,41 @@ test('export_image writes the file and reports size and bit depth', async (t) =>
 
 // WebP, quality and max_size: what about 20 hand-written run_pjsr exports did in the logged sessions
 // (resize to a fixed width, then saveAs with a "quality N" hint), done in the copy export_image writes.
-test('export_image writes WebP as 8-bit and passes quality as the format hint', async (t) => {
+// PixInsight 1.9.6's WebP module writes lossless unless given the "lossy" hint, and takes "quality" as
+// compression effort when lossless (checked live: the logged "quality 88" exports were all lossless).
+test('export_image writes WebP as 8-bit, lossless unless asked, and passes the mode and quality as format hints', async (t) => {
   const ws = tempWorkspace(t);
-  const { ctx, emitted } = createFakeBridge({ replies: [JSON.stringify({ bytes: 524288, from: [9000, 6000], size: [9000, 6000], scaled: false, hadSol: false, keptSol: false })] });
-  const out = await byName.export_image.handler(apiFrom(ctx, { workspace: ws.workspace }), { view_id: 'RGB', file_path: 'web/m31.webp', quality: 88 });
+  const reply = JSON.stringify({ bytes: 524288, from: [9000, 6000], size: [9000, 6000], scaled: false, hadSol: false, keptSol: false });
+  const a = createFakeBridge({ replies: [reply] });
+  const out = await byName.export_image.handler(apiFrom(a.ctx, { workspace: ws.workspace }), { view_id: 'RGB', file_path: 'web/m31.webp', quality: 88 });
   assert.equal(out.isError, undefined, out.text);
-  assert.match(emitted[0], /SampleFormatConversion\.To8Bit/);
-  assert.match(emitted[0], /c\.saveAs\("[^"]+\/web\/m31\.webp", false, false, false, false, "quality 88"\)/);
-  assert.doesNotMatch(emitted[0], /new Resample/, 'no max_size, no Resample');
-  assert.equal(out.text, `Wrote ${path.join(ws.outputDir, 'web', 'm31.webp')} (0.5 MB, 8-bit, quality 88, 9000x6000).`);
+  assert.match(a.emitted[0], /SampleFormatConversion\.To8Bit/);
+  assert.match(a.emitted[0], /c\.saveAs\("[^"]+\/web\/m31\.webp", false, false, false, false, "lossless quality 88"\)/);
+  assert.doesNotMatch(a.emitted[0], /new Resample/, 'no max_size, no Resample');
+  assert.equal(out.text, `Wrote ${path.join(ws.outputDir, 'web', 'm31.webp')} (0.5 MB, 8-bit, lossless, quality 88, 9000x6000).`);
+
+  const b = createFakeBridge({ replies: [reply] });
+  const lossy = await byName.export_image.handler(apiFrom(b.ctx, { workspace: ws.workspace }), { view_id: 'RGB', file_path: 'web/m31.webp', quality: 88, webp_compression: 'lossy' });
+  assert.match(b.emitted[0], /false, false, false, false, "lossy quality 88"\)/);
+  assert.match(lossy.text, /\(0\.5 MB, 8-bit, lossy, quality 88, 9000x6000\)/);
+
+  const c = createFakeBridge({ replies: [reply] });
+  await byName.export_image.handler(apiFrom(c.ctx, { workspace: ws.workspace }), { view_id: 'RGB', file_path: 'web/m31.webp' });
+  assert.match(c.emitted[0], /false, false, false, false, "lossless"\)/, 'the mode is passed even without quality');
+});
+
+test('export_image refuses webp_compression for other formats and other values', async (t) => {
+  const ws = tempWorkspace(t);
+  for (const [input, re] of [
+    [{ file_path: 'a.jpg', webp_compression: 'lossy' }, /webp_compression applies to \.webp files, not \.jpg\. Nothing was written\./],
+    [{ file_path: 'a.webp', webp_compression: 'near-lossless' }, /must be "lossless" or "lossy"; got "near-lossless"\. Nothing was written\./],
+  ]) {
+    const { ctx, emitted } = createFakeBridge();
+    const out = await byName.export_image.handler(apiFrom(ctx, { workspace: ws.workspace }), { view_id: 'RGB', ...input });
+    assert.equal(out.isError, true);
+    assert.match(out.text, re);
+    assert.equal(emitted.length, 0);
+  }
 });
 
 test('export_image without quality passes no format hint', async (t) => {

@@ -340,14 +340,15 @@ export function resolveExportPath(filePath, { outputDir, stateDir }, platform = 
 
 const exportImage = {
   name: 'export_image',
-  description: 'Write an image to a file in the workspace\'s output or state folder. A relative file_path is resolved under <workspace>/output; an absolute one must lie inside <workspace>/output or the state folder (<workspace>/agentic by default), and a path anywhere else is refused. Format comes from the extension: .tif/.tiff, .png, .jpg/.jpeg, .webp, .xisf, .fits. TIFF and PNG default to 16-bit, JPEG and WebP are 8-bit; use 32 for float. quality sets JPEG and WebP compression; max_size scales the written copy down with Resample so its longest edge is at most that many pixels. The file keeps the image\'s FITS keywords, astrometric solution and view properties (formats that cannot store them drop them; on a scaled copy, the solution is whatever Resample leaves, and the result says which); an XISF file also keeps the view\'s id, so it opens under that name. The working image is not changed. Missing parent folders are created.',
+  description: 'Write an image to a file in the workspace\'s output or state folder. A relative file_path is resolved under <workspace>/output; an absolute one must lie inside <workspace>/output or the state folder (<workspace>/agentic by default), and a path anywhere else is refused. Format comes from the extension: .tif/.tiff, .png, .jpg/.jpeg, .webp, .xisf, .fits. TIFF and PNG default to 16-bit, JPEG and WebP are 8-bit; use 32 for float. WebP is written lossless (pixel values kept exactly, PixInsight\'s WebP default) unless webp_compression is "lossy". quality is JPEG\'s compression quality and lossy WebP\'s; for lossless WebP, PixInsight takes it as compression effort (higher gives a smaller file, more slowly). max_size scales the written copy down with Resample so its longest edge is at most that many pixels. The file keeps the image\'s FITS keywords, astrometric solution and view properties (formats that cannot store them drop them; on a scaled copy, the solution is whatever Resample leaves, and the result says which); an XISF file also keeps the view\'s id, so it opens under that name. The working image is not changed. Missing parent folders are created.',
   inputSchema: {
     type: 'object',
     properties: {
       view_id: { type: 'string', description: 'View ID to export' },
       file_path: { type: 'string', description: 'Output file path: relative to <workspace>/output, or absolute inside <workspace>/output or the state folder' },
       bits: { type: 'number', enum: [8, 16, 32], description: 'Sample depth for tif/png/xisf/fits (default 16 for tif/png, 32 otherwise)' },
-      quality: { type: 'number', description: 'JPEG or WebP quality, a whole number from 1 to 100, passed to PixInsight as the "quality" format hint. Omitted: PixInsight\'s own default. Refused for other formats.' },
+      quality: { type: 'number', description: 'A whole number from 1 to 100, passed to PixInsight as the "quality" format hint: compression quality for JPEG and lossy WebP, compression effort for lossless WebP. Omitted: PixInsight\'s own default. Refused for other formats.' },
+      webp_compression: { type: 'string', enum: ['lossless', 'lossy'], description: 'WebP only: "lossless" (the default, as in PixInsight) keeps pixel values exactly; "lossy" writes a smaller file with altered pixel values. Refused for other formats.' },
       max_size: { type: 'number', description: 'Longest edge of the written image in pixels, a whole number of at least 16. A larger image is scaled down to it with Resample (aspect ratio kept, Resample\'s default interpolation) in the copy that is written; a smaller one is written at its own size.' },
     },
     required: ['view_id', 'file_path'],
@@ -367,6 +368,15 @@ const exportImage = {
       if (!eightBitFormat) return { isError: true, text: `quality applies to .jpg, .jpeg and .webp files, not ${ext}. Nothing was written.` };
       if (!Number.isInteger(quality) || quality < 1 || quality > 100) return { isError: true, text: `quality must be a whole number from 1 to 100; got ${JSON.stringify(quality)}. Nothing was written.` };
     }
+    const compression = input.webp_compression;
+    if (compression !== undefined) {
+      if (ext !== '.webp') return { isError: true, text: `webp_compression applies to .webp files, not ${ext}. Nothing was written.` };
+      if (compression !== 'lossless' && compression !== 'lossy') return { isError: true, text: `webp_compression must be "lossless" or "lossy"; got ${JSON.stringify(compression)}. Nothing was written.` };
+    }
+    // PixInsight's WebP module writes lossless unless told "lossy", and reads "quality" as compression
+    // effort when lossless; the mode is always passed, so the result can name it.
+    const webpMode = ext === '.webp' ? (compression ?? 'lossless') : null;
+    const formatHints = [webpMode, quality === undefined ? null : `quality ${quality}`].filter(Boolean).join(' ');
     const maxSize = input.max_size;
     if (maxSize !== undefined && (!Number.isInteger(maxSize) || maxSize < 16)) {
       return { isError: true, text: `max_size must be a whole number of pixels, at least 16; got ${JSON.stringify(maxSize)}. Nothing was written.` };
@@ -420,25 +430,26 @@ const exportImage = {
         ${conv ? `var S = new SampleFormatConversion; S.format = ${conv}; S.executeOn(c.mainView);` : ''}
         var W1 = c.mainView.image.width, H1 = c.mainView.image.height, keptSol = c.hasAstrometricSolution;
         if (File.exists(${q(toPixPath(file))})) File.remove(${q(toPixPath(file))});
-        if (!c.saveAs(${q(toPixPath(file))}, false, false, false, false${quality === undefined ? '' : `, ${q(`quality ${quality}`)}`})) throw new Error('PixInsight did not write ' + ${q(toPixPath(file))} + ' (saveAs returned false)');
+        if (!c.saveAs(${q(toPixPath(file))}, false, false, false, false${formatHints ? `, ${q(formatHints)}` : ''})) throw new Error('PixInsight did not write ' + ${q(toPixPath(file))} + ' (saveAs returned false)');
       } finally {
         if (c !== null) c.forceClose();
         __w.mainView.id = srcId;
       }
       if (!File.exists(${q(toPixPath(file))})) throw new Error('File was not written');
       return JSON.stringify({ bytes: new FileInfo(${q(toPixPath(file))}).size, from: [W0, H0], size: [W1, H1], scaled: scaled, hadSol: hadSol, keptSol: keptSol });`);
-    return { text: exportText(file, out, { bits: eightBitFormat ? 8 : bits, quality }) };
+    return { text: exportText(file, out, { bits: eightBitFormat ? 8 : bits, quality, webpMode }) };
   },
 };
 
 // The result line of export_image. `out` is the PJSR's JSON ({ bytes, from, size, scaled, hadSol,
 // keptSol }); a bare byte count is read as { bytes }.
-function exportText(file, out, { bits, quality }) {
+function exportText(file, out, { bits, quality, webpMode }) {
   let info = null;
   try { info = JSON.parse(String(out)); } catch { info = null; }
   if (typeof info === 'number') info = { bytes: info };
   info = info ?? {};
   const parts = [`${(Number(info.bytes) / 1048576).toFixed(1)} MB`, `${bits}-bit`];
+  if (webpMode) parts.push(webpMode);
   if (quality !== undefined) parts.push(`quality ${quality}`);
   if (Array.isArray(info.size)) parts.push(`${info.size[0]}x${info.size[1]}`);
   let text = `Wrote ${file} (${parts.join(', ')}).`;
