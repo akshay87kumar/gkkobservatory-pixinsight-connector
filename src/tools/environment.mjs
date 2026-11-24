@@ -335,7 +335,7 @@ const inspectEnvironmentTool = {
     },
   },
   async handler(api, input) {
-    return { text: JSON.stringify(await inspectEnvironment(api, input ?? {}), null, 2) };
+    return { text: JSON.stringify(await inspectEnvironment(api, input ?? {})) };
   },
 };
 

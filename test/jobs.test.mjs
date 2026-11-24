@@ -7,7 +7,7 @@ import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { createServer, buildRuntimeApi, assembleCatalog, dialogHintMs } from '../src/server.mjs';
+import { createServer, buildRuntimeApi, assembleCatalog, dialogHintMs, MAX_JOB_WAIT_S } from '../src/server.mjs';
 import { buildCoreCatalog } from '../src/tools/index.mjs';
 import { createWorkspace } from '../src/workspace.mjs';
 import { createJobs, PixInsightBusyError } from '../src/jobs.mjs';
@@ -181,6 +181,59 @@ test('a finished job keeps its result for job_status; cancel_job on it cancels n
     assert.equal(st.result, 'done: 12 rounds');
     assert.match((await s.call('cancel_job', { job_id: id })).text, /already ended: done/);
     assert.equal((await s.call('job_status', { job_id: 'job-nope' })).isError, true);
+  } finally {
+    await s.close();
+  }
+});
+
+// In the logged sessions 33 jobs took 189 job_status calls; wait_seconds answers when the job ends.
+test('job_status with wait_seconds answers as soon as the job ends, or when the wait runs out', async () => {
+  const s = await serve();
+  try {
+    const id = (await s.call('run_pjsr', { code: 'x', async: true })).text.match(/Started job (job-\S+)/)[1];
+    const t0 = Date.now();
+    const waiting = s.call('job_status', { job_id: id, wait_seconds: 30 });
+    await delay(30);
+    s.bridge.gate.resolve({ status: 'ok', result: 'done: 3 rounds', outputs: { consoleErrors: [] } });
+    const st = JSON.parse((await waiting).text);
+    assert.equal(st.state, 'done');
+    assert.equal(st.result, 'done: 3 rounds');
+    assert.ok(Date.now() - t0 < 5000, 'answered when the job ended, not after 30 s');
+
+    await s.call('run_pjsr', { code: 'y', async: true });
+    const t1 = Date.now();
+    const still = JSON.parse((await s.call('job_status', { wait_seconds: 0.05 })).text);
+    assert.equal(still.state, 'running');
+    assert.ok(Date.now() - t1 >= 45, 'waited');
+    s.bridge.gate.resolve({ status: 'ok', result: '', outputs: { consoleErrors: [] } });
+  } finally {
+    await s.close();
+  }
+});
+
+test('job_status refuses a wait_seconds outside 0 to MAX_JOB_WAIT_S', async () => {
+  const s = await serve();
+  try {
+    await s.call('run_pjsr', { code: 'x', async: true });
+    for (const wait_seconds of [-1, MAX_JOB_WAIT_S + 1, 'soon']) {
+      const r = await s.call('job_status', { wait_seconds });
+      assert.equal(r.isError, true, String(wait_seconds));
+      assert.match(r.text, new RegExp(`wait_seconds must be a number from 0 to ${MAX_JOB_WAIT_S}`));
+    }
+    s.bridge.gate.resolve({ status: 'ok', result: '', outputs: { consoleErrors: [] } });
+  } finally {
+    await s.close();
+  }
+});
+
+test('a failed job\'s report carries the PJSR error hint', async () => {
+  const s = await serve();
+  try {
+    const id = (await s.call('run_pjsr', { code: 'x', async: true })).text.match(/Started job (job-\S+)/)[1];
+    s.bridge.gate.resolve({ status: 'error', error: { message: 'Script error: UndoFlag_NoSwapFile is not defined' }, outputs: {} });
+    const st = JSON.parse((await s.call('job_status', { job_id: id, wait_seconds: 5 })).text);
+    assert.equal(st.state, 'failed');
+    assert.match(st.hint, /UndoFlag\.NoSwapFile/);
   } finally {
     await s.close();
   }

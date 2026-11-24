@@ -402,8 +402,10 @@ behind a long job would otherwise wait unanswered); `job_status`, `cancel_job`, 
 before.
 
 `job_status` reads the job's state and, while it runs, the `busy` heartbeat (which command, and how long
-since the script last called `processEvents()`) and `progress/{id}`. Snippets report progress with
-`mcpProgress(text)` and can poll `mcpCancelRequested()`; both are globals of the watcher.
+since the script last called `processEvents()`) and `progress/{id}`. With `wait_seconds` (at most 120) it
+first waits, in the connector, for a job that has not ended to end, and answers as soon as it does; nothing
+extra is sent to PixInsight while it waits. Snippets report progress with `mcpProgress(text)` and can poll
+`mcpCancelRequested()`; both are globals of the watcher.
 
 `cancel_job`:
 - a job whose command no watcher has claimed yet: the connector deletes `commands/{id}.json`, and the job

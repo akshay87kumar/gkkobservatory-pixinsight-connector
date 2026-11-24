@@ -93,7 +93,7 @@ const compareImages = {
   },
   async handler(api, input) {
     const out = await pjsrJson(api, compareImagesPjsr(input.view_id, input.reference_id, rectFrom(input)), 'compare_images');
-    return { text: JSON.stringify(out, null, 2) };
+    return { text: JSON.stringify(out) };
   },
 };
 

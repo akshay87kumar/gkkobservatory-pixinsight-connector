@@ -237,7 +237,7 @@ const verifyAstrometry = {
     if (reply.status === 'error' && /MCP_ABORTED/.test(String(reply.error?.message))) throw new Error(reply.error.message);
     const out = parseVerifyReply(reply);
     if (out.error) return { isError: true, text: `Astrometry verification FAILED: ${String(out.error).replace(/\.$/, '')}.` };
-    return { text: JSON.stringify(out, null, 2) };
+    return { text: JSON.stringify(out) };
   },
 };
 

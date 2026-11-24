@@ -4,7 +4,7 @@ import { createFakeBridge, apiFrom } from './fake-bridge.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { tools } from '../src/tools/execute.mjs';
+import { tools, pjsrErrorHint } from '../src/tools/execute.mjs';
 
 const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
 
@@ -26,6 +26,34 @@ test('run_pjsr surfaces an error without throwing', async () => {
   const out = await byName.run_pjsr.handler(apiFrom(ctx), { code: 'x' });
   assert.match(out.text, /bad snippet/);
   assert.equal(out.isError, true);
+});
+
+// The two mistakes behind about half of the run_pjsr failures in the logged sessions, with the errors
+// PixInsight 1.9 gave for them (verbatim from the call logs).
+test('pjsrErrorHint names the V8 spelling of a constant and the numeric constants a parameter takes', () => {
+  assert.match(pjsrErrorHint('Script error: UndoFlag_NoSwapFile is not defined'), /If UndoFlag_NoSwapFile names a PixInsight constant: .*UndoFlag\.NoSwapFile\.$/);
+  assert.match(pjsrErrorHint('Script error: ImageOp_Mov is not defined'), /ImageOp\.Mov/);
+  const enumHint = pjsrErrorHint('Script error: PixelMath.newImageColorSpace(): Invalid argument type: signed integer value expected.');
+  assert.match(enumHint, /^PixelMath\.newImageColorSpace takes a number: one of PixelMath's constants, written PixelMath\.<Name>\. /);
+  assert.match(enumHint, /describe_process lists its constants/);
+  assert.match(pjsrErrorHint('IntegerResample.downsamplingMode(): Invalid argument type: signed integer value expected. | Console: ** Warning: x'), /^IntegerResample\.downsamplingMode takes a number/);
+  for (const other of ['Script error: foo is not defined', 'Script error: myVar is not defined', 'Image.setSample(): Read-only image.', 'File.size is not a function', '', undefined]) {
+    assert.equal(pjsrErrorHint(other), '', String(other));
+  }
+});
+
+test('run_pjsr and run_process add the hint to the error PixInsight reported', async () => {
+  const a = createFakeBridge({ replies: [{ status: 'error', error: { message: 'Script error: UndoFlag_NoSwapFile is not defined' } }] });
+  const out = await byName.run_pjsr.handler(apiFrom(a.ctx), { code: 'x' });
+  assert.equal(out.isError, true);
+  assert.match(out.text, /^PJSR error: Script error: UndoFlag_NoSwapFile is not defined\nIf UndoFlag_NoSwapFile names/);
+  const plain = createFakeBridge({ replies: [{ status: 'error', error: { message: 'bad snippet' } }] });
+  assert.equal((await byName.run_pjsr.handler(apiFrom(plain.ctx), { code: 'x' })).text, 'PJSR error: bad snippet');
+  const b = createFakeBridge({ replies: [{ status: 'error', error: { message: 'Crop.mode(): Invalid argument type: signed integer value expected.' } }] });
+  await assert.rejects(
+    () => byName.run_process.handler(apiFrom(b.ctx), { name: 'Crop', params: { mode: 'AbsolutePixels' }, view_id: 'V' }),
+    /signed integer value expected\.\nCrop\.mode takes a number: one of Crop's constants/
+  );
 });
 
 test('run_pixelmath emits the expression and truncation guard', async () => {

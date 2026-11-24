@@ -157,7 +157,7 @@ const catalogStars = {
     fs.writeFileSync(file, JSON.stringify(out, null, 1));
     const { list, ...summary } = out;
     const body = { ...summary, file, ...(list.length <= INLINE_MAX ? { list } : { brightest: list.slice(0, 20) }) };
-    return { text: JSON.stringify(body, null, 2) };
+    return { text: JSON.stringify(body) };
   },
 };
 

@@ -26,23 +26,19 @@ const pixinsightInfo = {
     // PixInsight was not found when the server started: say so, as an error, rather than report
     // a set of empty paths as if they were an install.
     if (api.platform.error) {
-      return { isError: true, text: JSON.stringify({ error: api.platform.error, connectorVersion: api.connectorVersion }, null, 2) };
+      return { isError: true, text: JSON.stringify({ error: api.platform.error, connectorVersion: api.connectorVersion }) };
     }
     const { piBin, imageSolverPath, filterDbPath, whiteRefPath, settingsPath, verified } = api.platform;
     return {
-      text: JSON.stringify(
-        {
-          piBin,
-          imageSolverPath,
-          filterDbPath,
-          whiteRefPath,
-          settingsPath,
-          verified,
-          connectorVersion: api.connectorVersion,
-        },
-        null,
-        2
-      ),
+      text: JSON.stringify({
+        piBin,
+        imageSolverPath,
+        filterDbPath,
+        whiteRefPath,
+        settingsPath,
+        verified,
+        connectorVersion: api.connectorVersion,
+      }),
     };
   },
 };

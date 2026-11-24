@@ -89,7 +89,7 @@ const measureUniformityTool = {
   },
   async handler(api, input) {
     const uni = await measureUniformity(api, input.view_id, input.sample_size);
-    return { text: JSON.stringify(uni, null, 2) };
+    return { text: JSON.stringify(uni) };
   },
 };
 
@@ -97,7 +97,7 @@ const measureUniformityTool = {
 // Folded measure_* tools
 // ---------------------------------------------------------------------------
 
-const json = (o) => ({ text: JSON.stringify(o, null, 2) });
+const json = (o) => ({ text: JSON.stringify(o) });
 
 // Runs a measurement; a mono image, or too few pixels to measure, is an error result carrying the
 // reason (and the count), never a stand-in number.
