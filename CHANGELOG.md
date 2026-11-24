@@ -2,6 +2,15 @@
 
 Each release's full notes are on its [GitHub release](https://github.com/mxcoppell/pixinsight-connector/releases).
 
+## Unreleased
+
+Changes for what the call logs of 26 real sessions (2,580 tool calls, six targets, 25 October to 24 November 2026) showed agents working around. Unit-tested; not yet run in PixInsight. They are not offered upstream.
+
+- **`run_pjsr` and `run_process` errors name the two most common API mistakes.** About half of `run_pjsr`'s 36 failures were a constant spelled the old way (`UndoFlag_NoSwapFile is not defined`; V8 writes `UndoFlag.NoSwapFile`) or a string or undefined value for a parameter that takes a numeric constant (`PixelMath.newImageColorSpace(): Invalid argument type: signed integer value expected`, also seen for `IntegerResample.downsamplingMode`, `Crop.mode`, `FastRotation.mode`, `CurvesTransformation.Kt`). The error now carries a sentence saying so; a failed job's `job_status` report has it as `hint`.
+- **`export_image` writes WebP, takes `quality` and `max_size`.** About 20 hand-written `run_pjsr` exports resized an image to a fixed width and saved JPEG or WebP with a `"quality N"` format hint. `.webp` is now a supported extension (8-bit, like JPEG); `quality` (1-100) is passed as that hint for JPEG and WebP; `max_size` scales the written copy down with Resample so its longest edge is at most that many pixels, before the sample-depth conversion. The working image is not changed. The result gives the written size and, for a scaled copy, the original size and whether Resample kept the astrometric solution.
+- **`job_status` takes `wait_seconds`** (0 to 120): it waits for a job that has not ended and answers as soon as it does. 33 jobs took 189 `job_status` calls in the logs.
+- **Tool results are compact JSON.** Results were indented; on the logged results this is 11% of all JSON result text, and 28-39% for `list_open_images`, `catalog_stars`, `describe_process`, `inspect_environment` and `get_image_stats`. Files on disk (the bridge's command files, WBPP's `run.json`) and `doctor`'s output stay indented.
+
 ## 2.5.3-gkkobservatory.4
 
 Fixes from a review of every existing tool, kept to the problems that can damage work or give a wrong number; each was checked in PixInsight 1.9.5 on Windows 11 against synthetic images, the old code next to the new where it applies. They are not offered upstream.

@@ -79,7 +79,7 @@ test('compare_images handler sends a compiling snippet and returns its JSON', as
   const { api, emitted } = compilingApi({ replies: [JSON.stringify({ identical: true, channels: [] })] });
   const out = await tool(compareTools, 'compare_images').handler(api, { view_id: 'A', reference_id: 'B', rect: [0, 0, 10, 10] });
   assert.match(emitted[0], /getSamples/);
-  assert.match(out.text, /"identical": true/);
+  assert.equal(JSON.parse(out.text).identical, true);
   await assert.rejects(tool(compareTools, 'compare_images').handler(api, { view_id: 'A', reference_id: 'B', rect: [0, 0, 1] }), /rect/);
 });
 

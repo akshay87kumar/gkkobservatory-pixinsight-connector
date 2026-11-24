@@ -136,7 +136,7 @@ const listProcessesTool = {
   inputSchema: { type: 'object', properties: {} },
   async handler(api, _input) {
     const result = await listProcesses(api);
-    return { text: JSON.stringify(result, null, 2) };
+    return { text: JSON.stringify(result) };
   },
 };
 
@@ -151,7 +151,7 @@ const describeProcessTool = {
   async handler(api, input) {
     if (!input?.name) throw new Error('describe_process: "name" is required');
     const result = await describeProcess(api, input.name);
-    return { text: JSON.stringify(result, null, 2) };
+    return { text: JSON.stringify(result) };
   },
 };
 

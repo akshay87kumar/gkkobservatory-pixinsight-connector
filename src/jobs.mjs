@@ -100,7 +100,7 @@ export function createJobs({ now = Date.now } = {}) {
         if (job.cancelRequested) { try { onCancel(cmdId); } catch {} }
       },
     };
-    Promise.resolve()
+    const settled = Promise.resolve()
       .then(() => run(hooks))
       .then((r) => settleResult(job, r), (e) => settleError(job, e))
       .finally(() => {
@@ -108,6 +108,9 @@ export function createJobs({ now = Date.now } = {}) {
         if (active === job) active = null;
         prune();
       });
+    // Resolves once the job has ended and finishedAt is set (job_status's wait_seconds waits on it).
+    // Not enumerable, so the job's own fields stay what they were.
+    Object.defineProperty(job, 'ended', { value: settled.then(() => {}, () => {}), enumerable: false });
     return job;
   }
 

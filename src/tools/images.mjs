@@ -122,7 +122,7 @@ const listOpenImages = {
   inputSchema: { type: 'object', properties: {} },
   async handler(api, _input) {
     const imgs = await api.listImages();
-    return { text: JSON.stringify(imgs, null, 2) };
+    return { text: JSON.stringify(imgs) };
   },
 };
 
@@ -314,7 +314,7 @@ const getImageStats = {
   async handler(api, input) {
     const stats = await api.stats(input.view_id);
     stats.clampFractions = await clampFractions(api, input.view_id);
-    return { text: JSON.stringify(stats, null, 2) };
+    return { text: JSON.stringify(stats) };
   },
 };
 
@@ -340,25 +340,37 @@ export function resolveExportPath(filePath, { outputDir, stateDir }, platform = 
 
 const exportImage = {
   name: 'export_image',
-  description: 'Write an image to a file in the workspace\'s output or state folder. A relative file_path is resolved under <workspace>/output; an absolute one must lie inside <workspace>/output or the state folder (<workspace>/agentic by default), and a path anywhere else is refused. Format comes from the extension: .tif/.tiff, .png, .jpg/.jpeg, .xisf, .fits. TIFF and PNG default to 16-bit, JPEG to 8-bit; use 32 for float. The file keeps the image\'s FITS keywords, astrometric solution and view properties (formats that cannot store them drop them); an XISF file also keeps the view\'s id, so it opens under that name. The working image is not changed. Missing parent folders are created.',
+  description: 'Write an image to a file in the workspace\'s output or state folder. A relative file_path is resolved under <workspace>/output; an absolute one must lie inside <workspace>/output or the state folder (<workspace>/agentic by default), and a path anywhere else is refused. Format comes from the extension: .tif/.tiff, .png, .jpg/.jpeg, .webp, .xisf, .fits. TIFF and PNG default to 16-bit, JPEG and WebP are 8-bit; use 32 for float. quality sets JPEG and WebP compression; max_size scales the written copy down with Resample so its longest edge is at most that many pixels. The file keeps the image\'s FITS keywords, astrometric solution and view properties (formats that cannot store them drop them; on a scaled copy, the solution is whatever Resample leaves, and the result says which); an XISF file also keeps the view\'s id, so it opens under that name. The working image is not changed. Missing parent folders are created.',
   inputSchema: {
     type: 'object',
     properties: {
       view_id: { type: 'string', description: 'View ID to export' },
       file_path: { type: 'string', description: 'Output file path: relative to <workspace>/output, or absolute inside <workspace>/output or the state folder' },
       bits: { type: 'number', enum: [8, 16, 32], description: 'Sample depth for tif/png/xisf/fits (default 16 for tif/png, 32 otherwise)' },
+      quality: { type: 'number', description: 'JPEG or WebP quality, a whole number from 1 to 100, passed to PixInsight as the "quality" format hint. Omitted: PixInsight\'s own default. Refused for other formats.' },
+      max_size: { type: 'number', description: 'Longest edge of the written image in pixels, a whole number of at least 16. A larger image is scaled down to it with Resample (aspect ratio kept, Resample\'s default interpolation) in the copy that is written; a smaller one is written at its own size.' },
     },
     required: ['view_id', 'file_path'],
   },
   async handler(api, input) {
     const ext = path.extname(String(input.file_path)).toLowerCase();
-    if (!['.tif', '.tiff', '.png', '.jpg', '.jpeg', '.xisf', '.fits', '.fit'].includes(ext)) {
+    if (!['.tif', '.tiff', '.png', '.jpg', '.jpeg', '.webp', '.xisf', '.fits', '.fit'].includes(ext)) {
       return { isError: true, text: `Unsupported extension "${ext}".` };
     }
-    const defaultBits = ['.jpg', '.jpeg'].includes(ext) ? 8 : ['.tif', '.tiff', '.png'].includes(ext) ? 16 : 32;
+    const eightBitFormat = ['.jpg', '.jpeg', '.webp'].includes(ext);
+    const defaultBits = eightBitFormat ? 8 : ['.tif', '.tiff', '.png'].includes(ext) ? 16 : 32;
     const bits = input.bits ?? defaultBits;
     const conv = { 8: 'SampleFormatConversion.To8Bit', 16: 'SampleFormatConversion.To16Bit', 32: null }[bits];
     if (conv === undefined) return { isError: true, text: 'bits must be 8, 16 or 32.' };
+    const quality = input.quality;
+    if (quality !== undefined) {
+      if (!eightBitFormat) return { isError: true, text: `quality applies to .jpg, .jpeg and .webp files, not ${ext}. Nothing was written.` };
+      if (!Number.isInteger(quality) || quality < 1 || quality > 100) return { isError: true, text: `quality must be a whole number from 1 to 100; got ${JSON.stringify(quality)}. Nothing was written.` };
+    }
+    const maxSize = input.max_size;
+    if (maxSize !== undefined && (!Number.isInteger(maxSize) || maxSize < 16)) {
+      return { isError: true, text: `max_size must be a whole number of pixels, at least 16; got ${JSON.stringify(maxSize)}. Nothing was written.` };
+    }
     // The state folder is scratchDir's parent (src/workspace.mjs's workspacePaths).
     const outputDir = api.workspace.outputDir;
     const resolved = resolveExportPath(String(input.file_path), { outputDir, stateDir: path.dirname(api.workspace.scratchDir) });
@@ -392,18 +404,50 @@ const exportImage = {
             c.mainView.setPropertyAttributes(props[i], __w.mainView.propertyAttributes(props[i]));
           } catch (e) {}
         }
+        var W0 = src.width, H0 = src.height, scaled = false, hadSol = c.hasAstrometricSolution;
+        ${maxSize === undefined ? '' : `
+        // Scaled in the copy, in 32-bit float, before any conversion to the file's sample depth.
+        if (Math.max(W0, H0) > ${maxSize}) {
+          var R = new Resample;
+          R.mode = Resample.AbsolutePixels; R.absoluteMode = Resample.ForceWidthAndHeight;
+          R.xSize = Math.max(1, Math.round(W0 * ${maxSize} / Math.max(W0, H0)));
+          R.ySize = Math.max(1, Math.round(H0 * ${maxSize} / Math.max(W0, H0)));
+          // Routes Resample's question about the astrometric solution to the console instead of a dialog.
+          if (R.noGUIMessages !== undefined) R.noGUIMessages = true;
+          if (!R.executeOn(c.mainView)) throw new Error('Resample did not run (see console message)');
+          scaled = true;
+        }`}
         ${conv ? `var S = new SampleFormatConversion; S.format = ${conv}; S.executeOn(c.mainView);` : ''}
+        var W1 = c.mainView.image.width, H1 = c.mainView.image.height, keptSol = c.hasAstrometricSolution;
         if (File.exists(${q(toPixPath(file))})) File.remove(${q(toPixPath(file))});
-        if (!c.saveAs(${q(toPixPath(file))}, false, false, false, false)) throw new Error('PixInsight did not write ' + ${q(toPixPath(file))} + ' (saveAs returned false)');
+        if (!c.saveAs(${q(toPixPath(file))}, false, false, false, false${quality === undefined ? '' : `, ${q(`quality ${quality}`)}`})) throw new Error('PixInsight did not write ' + ${q(toPixPath(file))} + ' (saveAs returned false)');
       } finally {
         if (c !== null) c.forceClose();
         __w.mainView.id = srcId;
       }
       if (!File.exists(${q(toPixPath(file))})) throw new Error('File was not written');
-      return String(new FileInfo(${q(toPixPath(file))}).size);`);
-    return { text: `Wrote ${file} (${(Number(out) / 1048576).toFixed(1)} MB, ${ext === '.jpg' || ext === '.jpeg' ? '8-bit' : bits + '-bit'}).` };
+      return JSON.stringify({ bytes: new FileInfo(${q(toPixPath(file))}).size, from: [W0, H0], size: [W1, H1], scaled: scaled, hadSol: hadSol, keptSol: keptSol });`);
+    return { text: exportText(file, out, { bits: eightBitFormat ? 8 : bits, quality }) };
   },
 };
+
+// The result line of export_image. `out` is the PJSR's JSON ({ bytes, from, size, scaled, hadSol,
+// keptSol }); a bare byte count is read as { bytes }.
+function exportText(file, out, { bits, quality }) {
+  let info = null;
+  try { info = JSON.parse(String(out)); } catch { info = null; }
+  if (typeof info === 'number') info = { bytes: info };
+  info = info ?? {};
+  const parts = [`${(Number(info.bytes) / 1048576).toFixed(1)} MB`, `${bits}-bit`];
+  if (quality !== undefined) parts.push(`quality ${quality}`);
+  if (Array.isArray(info.size)) parts.push(`${info.size[0]}x${info.size[1]}`);
+  let text = `Wrote ${file} (${parts.join(', ')}).`;
+  if (info.scaled && Array.isArray(info.from)) {
+    text += ` Scaled down from ${info.from[0]}x${info.from[1]} in the written copy; the working image is unchanged.`;
+    if (info.hadSol) text += info.keptSol ? ' The scaled copy kept an astrometric solution.' : ' Resample removed the astrometric solution from the scaled copy.';
+  }
+  return text;
+}
 
 // ensure_dir: create a folder (and its parents) inside the folders a session writes to, so a save
 // from PJSR never meets a missing folder. PixInsight answers a save into a missing folder with a modal

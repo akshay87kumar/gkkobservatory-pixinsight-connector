@@ -45,6 +45,33 @@ function unknownProcessCheck(name) {
 
 export const NO_GUI_MESSAGES = 'if (P.noGUIMessages !== undefined) P.noGUIMessages = true;';
 
+// pjsrErrorHint(message) -> '' or one or two sentences about the PixInsight API, for an error PixInsight
+// reported. They cover the two mistakes behind about half of the run_pjsr failures in 2,580 logged calls:
+// a constant written the way older PixInsight versions spelled it (UndoFlag_NoSwapFile), and a string or
+// missing value given to a parameter that takes one of its process's numeric constants
+// ("PixelMath.newImageColorSpace(): Invalid argument type: signed integer value expected").
+const OLD_CONSTANT_RE = /\b([A-Z][A-Za-z0-9]*)_([A-Za-z0-9]\w*) is not defined\b/;
+const CONSTANT_ARG_RE = /\b([A-Z][A-Za-z0-9]*)\.([A-Za-z]\w*)\(\): Invalid argument type: (?:signed |unsigned )?integer value expected/;
+export function pjsrErrorHint(message) {
+  const text = String(message ?? '');
+  const hints = [];
+  const old = OLD_CONSTANT_RE.exec(text);
+  if (old) {
+    hints.push(`If ${old[1]}_${old[2]} names a PixInsight constant: PixInsight's JavaScript engine (V8) writes constants as properties of their object, ${old[1]}.${old[2]}.`);
+  }
+  const arg = CONSTANT_ARG_RE.exec(text);
+  if (arg) {
+    hints.push(`${arg[1]}.${arg[2]} takes a number: one of ${arg[1]}'s constants, written ${arg[1]}.<Name>. ` +
+      'For a process, describe_process lists its constants and the current value of each parameter.');
+  }
+  return hints.join(' ');
+}
+
+const withHint = (message) => {
+  const hint = pjsrErrorHint(message);
+  return hint ? `${message}\n${hint}` : message;
+};
+
 // runProcess(api, name, params, viewId) -> { ok, message }
 //
 // The generic escape hatch: instantiate any PixInsight process by its PJSR
@@ -90,7 +117,7 @@ export async function runProcess(api, name, params, viewId) {
   }
 
   const r = await api.pjsr(guard(lines.join('\n')));
-  if (r.status === 'error') throw new Error(r.error?.message || JSON.stringify(r.error));
+  if (r.status === 'error') throw new Error(withHint(r.error?.message || JSON.stringify(r.error)));
   return { ok: true, message: hasView ? `${name} executed on ${viewId}.` : `${name} executed globally.` };
 }
 
@@ -143,7 +170,7 @@ async function runChecked(api, parts) {
   const problem = syntaxProblem(parts);
   if (problem) return { isError: true, text: `${problem}. Nothing was sent to PixInsight.` };
   const r = await api.pjsr(parts.map((p) => p.text).join('\n'));
-  if (r.status === 'error') return { isError: true, text: `PJSR error: ${r.error?.message ?? JSON.stringify(r.error)}` };
+  if (r.status === 'error') return { isError: true, text: `PJSR error: ${withHint(r.error?.message ?? JSON.stringify(r.error))}` };
   return { text: String(r.result ?? '') };
 }
 

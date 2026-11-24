@@ -283,7 +283,7 @@ test('describe_process tool descriptor requires "name" and returns the descripti
 
   const { ctx: ctx2 } = createFakeBridge({ replies: [SCNR_DESCRIBE_REPLY] });
   const out = await byName.describe_process.handler(apiFrom(ctx2), { name: 'SCNR' });
-  assert.match(out.text, /"process": "SCNR"/);
+  assert.equal(JSON.parse(out.text).process, 'SCNR');
 });
 
 // --- run_pjsr_file ---

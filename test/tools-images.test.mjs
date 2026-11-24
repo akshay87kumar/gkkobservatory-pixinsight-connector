@@ -56,7 +56,7 @@ test('list_open_images returns whatever listImages reports', async () => {
   const { ctx } = createFakeBridge();
   ctx.listImages = async () => [{ id: 'RGB', width: 10, height: 10 }];
   const out = await byName.list_open_images.handler(apiFrom(ctx), {});
-  assert.match(out.text, /"id": "RGB"/);
+  assert.deepEqual(JSON.parse(out.text), [{ id: 'RGB', width: 10, height: 10 }]);
 });
 
 test('rename_view emits a mainView.id assignment', async () => {
@@ -96,7 +96,7 @@ test('get_image_dimensions reports one entry per requested view', async () => {
 test('get_image_stats returns the parsed stats object', async () => {
   const { ctx } = createFakeBridge({ replies: [JSON.stringify({ median: 0.1, mad: 0.01 })] });
   const out = await byName.get_image_stats.handler(apiFrom(ctx), { view_id: 'RGB' });
-  assert.match(out.text, /"median": 0.1/);
+  assert.equal(JSON.parse(out.text).median, 0.1);
 });
 
 // A real temp workspace: export_image creates the parent folder on disk before PixInsight runs.
@@ -220,6 +220,64 @@ test('export_image writes the file and reports size and bit depth', async (t) =>
   const out = await byName.export_image.handler(apiFrom(ctx, { workspace: ws.workspace }), { view_id: 'RGB', file_path: 'out.tif' });
   assert.match(emitted[0], /SampleFormatConversion\.To16Bit/);
   assert.match(out.text, /1\.0 MB, 16-bit/);
+});
+
+// WebP, quality and max_size: what about 20 hand-written run_pjsr exports did in the logged sessions
+// (resize to a fixed width, then saveAs with a "quality N" hint), done in the copy export_image writes.
+test('export_image writes WebP as 8-bit and passes quality as the format hint', async (t) => {
+  const ws = tempWorkspace(t);
+  const { ctx, emitted } = createFakeBridge({ replies: [JSON.stringify({ bytes: 524288, from: [9000, 6000], size: [9000, 6000], scaled: false, hadSol: false, keptSol: false })] });
+  const out = await byName.export_image.handler(apiFrom(ctx, { workspace: ws.workspace }), { view_id: 'RGB', file_path: 'web/m31.webp', quality: 88 });
+  assert.equal(out.isError, undefined, out.text);
+  assert.match(emitted[0], /SampleFormatConversion\.To8Bit/);
+  assert.match(emitted[0], /c\.saveAs\("[^"]+\/web\/m31\.webp", false, false, false, false, "quality 88"\)/);
+  assert.doesNotMatch(emitted[0], /new Resample/, 'no max_size, no Resample');
+  assert.equal(out.text, `Wrote ${path.join(ws.outputDir, 'web', 'm31.webp')} (0.5 MB, 8-bit, quality 88, 9000x6000).`);
+});
+
+test('export_image without quality passes no format hint', async (t) => {
+  const ws = tempWorkspace(t);
+  const { ctx, emitted } = createFakeBridge({ replies: ['10'] });
+  await byName.export_image.handler(apiFrom(ctx, { workspace: ws.workspace }), { view_id: 'RGB', file_path: 'a.jpg' });
+  assert.match(emitted[0], /c\.saveAs\("[^"]+\/a\.jpg", false, false, false, false\)/);
+});
+
+test('export_image max_size scales the copy with Resample before the sample conversion, and reports it', async (t) => {
+  const ws = tempWorkspace(t);
+  const reply = { bytes: 1048576, from: [9000, 6000], size: [3000, 2000], scaled: true, hadSol: true, keptSol: false };
+  const { ctx, emitted } = createFakeBridge({ replies: [JSON.stringify(reply)] });
+  const out = await byName.export_image.handler(apiFrom(ctx, { workspace: ws.workspace }), { view_id: 'RGB', file_path: 'm31.jpg', max_size: 3000, quality: 90 });
+  const js = emitted[0];
+  assert.match(js, /if \(Math\.max\(W0, H0\) > 3000\)/);
+  assert.match(js, /R\.mode = Resample\.AbsolutePixels; R\.absoluteMode = Resample\.ForceWidthAndHeight;/);
+  assert.match(js, /R\.xSize = Math\.max\(1, Math\.round\(W0 \* 3000 \/ Math\.max\(W0, H0\)\)\)/);
+  assert.match(js, /if \(R\.noGUIMessages !== undefined\) R\.noGUIMessages = true;/);
+  assert.ok(js.indexOf('R.executeOn(c.mainView)') > js.indexOf('c.copyAstrometricSolution(__w)'), 'scaled after the copy has everything');
+  assert.ok(js.indexOf('R.executeOn(c.mainView)') < js.indexOf('SampleFormatConversion'), 'scaled before the 8-bit conversion');
+  assert.doesNotMatch(js, /__w\.mainView\.image\.resample|executeOn\(__w/, 'the working image is not touched');
+  assert.match(out.text, /\(1\.0 MB, 8-bit, quality 90, 3000x2000\)\. Scaled down from 9000x6000 in the written copy; the working image is unchanged\. Resample removed the astrometric solution from the scaled copy\./);
+  const kept = createFakeBridge({ replies: [JSON.stringify({ ...reply, keptSol: true })] });
+  const out2 = await byName.export_image.handler(apiFrom(kept.ctx, { workspace: ws.workspace }), { view_id: 'RGB', file_path: 'm31.xisf', max_size: 3000 });
+  assert.match(out2.text, /32-bit, 3000x2000\)\. Scaled down .* The scaled copy kept an astrometric solution\./);
+});
+
+test('export_image refuses a quality for other formats or out of range, and a max_size that is not a whole number of at least 16', async (t) => {
+  const ws = tempWorkspace(t);
+  const cases = [
+    [{ file_path: 'a.png', quality: 90 }, /quality applies to \.jpg, \.jpeg and \.webp files, not \.png/],
+    [{ file_path: 'a.jpg', quality: 0 }, /whole number from 1 to 100; got 0/],
+    [{ file_path: 'a.webp', quality: 95.5 }, /got 95\.5/],
+    [{ file_path: 'a.jpg', max_size: 0 }, /max_size must be a whole number of pixels, at least 16; got 0/],
+    [{ file_path: 'a.jpg', max_size: 1200.5 }, /got 1200\.5/],
+  ];
+  for (const [input, re] of cases) {
+    const { ctx, emitted } = createFakeBridge();
+    const out = await byName.export_image.handler(apiFrom(ctx, { workspace: ws.workspace }), { view_id: 'RGB', ...input });
+    assert.equal(out.isError, true, JSON.stringify(input));
+    assert.match(out.text, re);
+    assert.match(out.text, /Nothing was written\.$/);
+    assert.equal(emitted.length, 0, 'nothing reached PixInsight');
+  }
 });
 
 test('open_image reports the id ImageWindow.open returned, not a guess from the view list', async () => {

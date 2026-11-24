@@ -145,7 +145,7 @@ const alignFiles = {
       reference: ref, targets: targets.length, batches: Math.ceil(targets.length / batch), failedBatches, columns, rows,
       ...(matrixOnly ? { matrixOnly: true, filesWrittenAndDeleted: written } : { outputDir: outDir }),
     };
-    const text = JSON.stringify(result, null, 2);
+    const text = JSON.stringify(result);
     return failedBatches.length ? { isError: true, text: `StarAlignment reported failure in batch(es) ${failedBatches.join(', ')}.\n${text}` } : { text };
   },
 };

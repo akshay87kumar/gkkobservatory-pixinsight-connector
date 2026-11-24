@@ -181,6 +181,6 @@ export const tools = [{
     // the workspace itself or above it (PIXINSIGHT_CONNECTOR_STATE=.) is not skipped: that would skip everything.
     const skip = [path.dirname(scratchDir), outputDir].filter((s) => s && !isInside(dir, s));
     const result = scanWorkspace(dir, skip);
-    return { text: JSON.stringify(result, null, 2) };
+    return { text: JSON.stringify(result) };
   },
 }];

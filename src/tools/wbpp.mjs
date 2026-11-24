@@ -270,7 +270,7 @@ export function makeWbppTools({ spawn = nodeSpawn, fs = nodeFs, isPidAlive = nod
         try { fs.writeFileSync(path.join(dir, 'exit.json'), JSON.stringify({ code: null, error: e.message, ended: new Date(now()).toISOString() })); } catch {}
       });
       child.unref?.();
-      return { text: JSON.stringify({ runId, pid: record.pid, outputDir: resolved.path, log: logPath, argv }, null, 2) };
+      return { text: JSON.stringify({ runId, pid: record.pid, outputDir: resolved.path, log: logPath, argv }) };
     },
   };
 
@@ -309,7 +309,7 @@ export function makeWbppTools({ spawn = nodeSpawn, fs = nodeFs, isPidAlive = nod
         wbppLogs: logs, consoleLog: st.run.log, consoleTail: tail,
       };
       const failed = st.exit && st.exit.code !== 0;
-      return failed ? { isError: true, text: `WBPP instance exited with code ${st.exit.code ?? st.exit.error}.\n${JSON.stringify(body, null, 2)}` } : { text: JSON.stringify(body, null, 2) };
+      return failed ? { isError: true, text: `WBPP instance exited with code ${st.exit.code ?? st.exit.error}.\n${JSON.stringify(body)}` } : { text: JSON.stringify(body) };
     },
   };
   return [runWbpp, wbppStatus];

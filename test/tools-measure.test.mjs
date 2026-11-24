@@ -477,7 +477,7 @@ test('measure_uniformity tool wraps measureUniformity over the Pack API v1 shape
   });
   const out = await byName.measure_uniformity.handler(apiFrom(ctx), { view_id: 'RGB' });
   assert.match(emitted[0], /windowById\("RGB"\)/);
-  assert.match(out.text, /"score": 0\.0012/);
+  assert.equal(JSON.parse(out.text).score, 0.0012);
 });
 
 test('measure_uniformity tool surfaces a PixInsight error', async () => {

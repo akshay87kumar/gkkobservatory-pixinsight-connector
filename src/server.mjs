@@ -39,7 +39,7 @@ import { buildCoreCatalog } from './tools/index.mjs';
 import { buildApi } from './api.mjs';
 import { loadPacks, mergeCatalogs } from './packs.mjs';
 import { createJobs, PixInsightBusyError } from './jobs.mjs';
-import { pjsrParts, syntaxProblem } from './tools/execute.mjs';
+import { pjsrErrorHint, pjsrParts, syntaxProblem } from './tools/execute.mjs';
 import { activeWbppRun } from './tools/wbpp.mjs';
 
 // Real filesystem primitives for materializeWatcher (src/runtime.mjs), adapted to the shape it
@@ -540,7 +540,7 @@ export function listPacksTool(packs, getShadowed = () => []) {
     description: 'List the runtime tool packs discovered at server startup, with load status, tool counts, why any pack was skipped, and which core tools packs replaced. Read-only.',
     inputSchema: { type: 'object', properties: {} },
     async handler(_api, _input) {
-      return { text: JSON.stringify({ packs, shadowed: getShadowed() }, null, 2) };
+      return { text: JSON.stringify({ packs, shadowed: getShadowed() }) };
     },
   };
 }
@@ -565,7 +565,7 @@ function workspaceInfoText(workspace, callLog, machineId, osPlatform) {
   const note = s.usable && osPlatform ? spaceInPathNote(osPlatform, s.stateDir) : null;
   if (note) info.note = note;
   info.log = callLog.status();
-  return JSON.stringify(info, null, 2);
+  return JSON.stringify(info);
 }
 
 export function workspaceInfoTool(workspace, callLog = NO_CALL_LOG, machineId = () => null, osPlatform = null) {
@@ -635,11 +635,19 @@ async function jobReport(control, job) {
     if (mine && hint > 0 && hb.ageMs >= hint) out.note = dialogHintText(hb.ageMs);
   } else {
     if (job.result !== null) out.result = job.result;
-    if (job.error !== null) out.error = job.error;
+    if (job.error !== null) {
+      out.error = job.error;
+      const hint = pjsrErrorHint(job.error);
+      if (hint) out.hint = hint;
+    }
     if (job.consoleErrors?.length) out.console_errors = job.consoleErrors;
   }
   return out;
 }
+
+// The longest job_status wait: inside the per-call timeouts MCP clients apply (180 s is a default seen in
+// use), and the dispatch's keepalive progress notifications cover a client that times out on silence.
+export const MAX_JOB_WAIT_S = 120;
 
 export function jobStatusTool(control) {
   return {
@@ -647,14 +655,29 @@ export function jobStatusTool(control) {
     description:
       'Report on a job started by run_pjsr or run_pjsr_file with `async`: its state (queued, running, ending = stopped in PixInsight with its result not yet collected, done, failed, cancelled, stopped), ' +
       'elapsed time, seconds since the running script last called processEvents(), its latest mcpProgress() text, and, once it has ended, ' +
-      'its result or error and PixInsight console errors. Without job_id: the running job, else the most recent one. Read-only; ' +
-      'it does not use PixInsight, so it answers while a job runs.',
-    inputSchema: { type: 'object', properties: { job_id: { type: 'string', description: 'The id run_pjsr returned. Omit for the running or most recent job.' } } },
+      'its result or error and PixInsight console errors. Without job_id: the running job, else the most recent one. With wait_seconds, a job that has not ended ' +
+      'is waited on for up to that long, and the report comes as soon as it ends. Read-only; it does not use PixInsight, so it answers while a job runs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        job_id: { type: 'string', description: 'The id run_pjsr returned. Omit for the running or most recent job.' },
+        wait_seconds: { type: 'number', description: `Longest time to wait for the job to end before reporting, in seconds, from 0 to ${MAX_JOB_WAIT_S}. 0 or omitted: report at once.` },
+      },
+    },
     async handler(_api, input) {
       if (!control) return NO_JOB_CONTROL;
+      const wait = input?.wait_seconds ?? 0;
+      if (typeof wait !== 'number' || !Number.isFinite(wait) || wait < 0 || wait > MAX_JOB_WAIT_S) {
+        return { isError: true, text: `wait_seconds must be a number from 0 to ${MAX_JOB_WAIT_S}; got ${JSON.stringify(input.wait_seconds)}.` };
+      }
       const job = input?.job_id ? control.jobs.get(input.job_id) : control.jobs.active() ?? control.jobs.latest();
       if (!job) return { isError: true, text: input?.job_id ? `No job ${input.job_id} (finished jobs are kept for the last 20).` : 'No job has been started in this session.' };
-      return { text: JSON.stringify(await jobReport(control, job), null, 2) };
+      if (wait > 0 && job.finishedAt === null && job.ended) {
+        let timer;
+        await Promise.race([job.ended, new Promise((resolve) => { timer = setTimeout(resolve, wait * 1000); })]);
+        clearTimeout(timer);
+      }
+      return { text: JSON.stringify(await jobReport(control, job)) };
     },
   };
 }
